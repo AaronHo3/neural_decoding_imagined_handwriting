@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neural-decoding-imagined-handwriting"
+version = "0.1.0"
+description = "Benchmarking alignment and decoders for neural handwriting BCI"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.20",
+    "scipy>=1.7.0",
+    "scikit-learn>=1.0",
+    "torch>=2.0",
+    "h5py>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "black", "ruff"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["alignment*", "decoders*", "benchmarks*", "data*"]
