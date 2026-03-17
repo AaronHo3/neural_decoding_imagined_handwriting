@@ -39,6 +39,8 @@ checkpoints/
 models/*.pt
 models/*.pth
 !models/.gitkeep
+handwritingBCIData/
+handwritingBCIData.tar.gz
 
 # Jupyter
 .ipynb_checkpoints/
