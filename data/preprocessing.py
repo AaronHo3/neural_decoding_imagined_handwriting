@@ -116,7 +116,7 @@ def prepare_for_decoder(
         targets_padded: (n_trials, max_target_len) — int, -1 for padding
         seq_lengths   : (n_trials,) — original neural sequence lengths
     """
-    # --- Normalise neural_cube to a list of 2-D arrays ---
+    # --- Normalize neural_cube to a list of 2-D arrays ---
     if isinstance(neural_cube, np.ndarray) and neural_cube.ndim == 3:
         sequences = [neural_cube[i] for i in range(len(neural_cube))]
     else:
@@ -134,7 +134,7 @@ def prepare_for_decoder(
         L = min(seq.shape[0], max_len)
         neural_padded[i, :L] = seq[:L]
 
-    # --- Normalise targets ---
+    # --- Normalize targets ---
     if isinstance(targets, np.ndarray) and targets.ndim == 2:
         targets_padded = targets.astype(int)
     else:

@@ -240,6 +240,59 @@ def normalize_neural(
     return (neural - mean) / std
 
 
+def _smooth_and_decode(logits: np.ndarray, active_mask: np.ndarray) -> str:
+    """
+    Convert frame-level logits to a character string using probability
+    smoothing and peak detection.
+
+    Instead of argmax → smooth → collapse (which fails with noisy predictions),
+    we smooth the raw softmax probabilities over a large window, then detect
+    character segments by finding where the dominant class changes.
+
+    With ~75 frames per character on average, we use a 51-frame window so
+    smoothing spans roughly 2/3 of a character segment — enough to stabilise
+    without blurring adjacent characters together.
+    """
+    from scipy.ndimage import uniform_filter1d
+
+    if not active_mask.any():
+        return ""
+
+    # Work with softmax probabilities (more informative than hard argmax)
+    from scipy.special import softmax
+    probs = softmax(logits[active_mask], axis=-1)  # (T_active, n_classes)
+    T = probs.shape[0]
+
+    if T < 10:
+        return ""
+
+    # Heavy smoothing on probability distributions
+    window = min(51, T // 3)
+    if window < 3:
+        window = 3
+    smoothed = uniform_filter1d(probs, size=window, axis=0)
+    pred_ids = smoothed.argmax(axis=1)
+
+    # Collapse with minimum run length proportional to expected char width
+    # Estimate: ~75 frames/char for 1500 frames / 20 chars
+    # Use min_run = 15 to filter noise (20% of expected segment)
+    min_run = max(5, T // 100)
+
+    runs = []
+    cur_val, cur_start = pred_ids[0], 0
+    for i in range(1, len(pred_ids)):
+        if pred_ids[i] != cur_val:
+            runs.append((cur_val, i - cur_start))
+            cur_val, cur_start = pred_ids[i], i
+    runs.append((cur_val, len(pred_ids) - cur_start))
+
+    chars = []
+    for val, length in runs:
+        if length >= min_run and 0 <= val < len(CHAR_ABBREV):
+            chars.append(CHAR_ABBREV[val])
+    return "".join(chars)
+
+
 def train_and_evaluate(
     name: str,
     decoder,
@@ -248,6 +301,7 @@ def train_and_evaluate(
     X_test: np.ndarray,
     y_test: np.ndarray,
     char_seqs_test: List[List[int]],
+    ref_sentences: List[str],
     is_ctc: bool = False,
     **fit_kwargs,
 ) -> Dict[str, float]:
@@ -259,16 +313,7 @@ def train_and_evaluate(
 
     print(f"\n  Training {name}...")
     t0 = time.time()
-
-    if is_ctc:
-        # CTC needs character sequences (1-indexed, 0 = blank)
-        y_tr_ctc = [np.array(s, dtype=np.int64) + 1 for s in
-                     [char_seqs_test[0]] * len(X_train)]  # placeholder
-        # Actually pass real training char seqs
-        decoder.fit(X_train, y_train, **fit_kwargs)
-    else:
-        decoder.fit(X_train, y_train, **fit_kwargs)
-
+    decoder.fit(X_train, y_train, **fit_kwargs)
     dt = time.time() - t0
     print(f"  Trained in {dt:.1f}s")
 
@@ -286,39 +331,22 @@ def train_and_evaluate(
                      for i in seq]
             pred_strings.append("".join(chars))
     else:
-        # Frame-level: argmax per timestep, then collapse runs
-        pred_ids = logits.argmax(axis=-1)  # (B, T)
+        # Frame-level: smooth probabilities, then collapse to string
         pred_strings = []
-        for row, y_row in zip(pred_ids, y_test):
-            # Only look at non-ignored timesteps
-            active = y_row >= 0
-            if not active.any():
-                pred_strings.append("")
-                continue
-            ids = row[active]
-            # Collapse consecutive duplicates
-            collapsed = [ids[0]]
-            for tok in ids[1:]:
-                if tok != collapsed[-1]:
-                    collapsed.append(tok)
-            chars = [CHAR_ABBREV[i] if 0 <= i < len(CHAR_ABBREV) else "?"
-                     for i in collapsed]
-            pred_strings.append("".join(chars))
+        for i in range(len(y_test)):
+            active = y_test[i] >= 0
+            pred_strings.append(_smooth_and_decode(logits[i], active))
 
-    # Reference strings from test labels
+    # Reference strings from actual sentence prompts (NOT from collapsing
+    # frame labels — that merges repeated characters like "ll" in "hello")
     ref_strings = []
-    for y_row in y_test:
-        active = y_row >= 0
-        if not active.any():
-            ref_strings.append("")
-            continue
-        ids = y_row[active]
-        collapsed = [ids[0]]
-        for tok in ids[1:]:
-            if tok != collapsed[-1]:
-                collapsed.append(tok)
-        chars = [CHAR_ABBREV[i] if 0 <= i < len(CHAR_ABBREV) else "?"
-                 for i in collapsed]
+    for sent in ref_sentences:
+        s = str(sent)
+        chars = []
+        for c in s:
+            full = _ABBREV_TO_FULL.get(c, c)
+            if full in CHAR_TO_IDX:
+                chars.append(c)
         ref_strings.append("".join(chars))
 
     # Show a few examples
@@ -419,13 +447,13 @@ def main():
     print(f"  Train: {len(train_idx)} sentences, Test: {len(test_idx)} sentences")
 
     # ------------------------------------------------------------------
-    # 2. Normalise
+    # 2. Normalize
     # ------------------------------------------------------------------
-    print("\n[2/5] Normalising neural data...")
+    print("\n[2/5] Normalizing neural data...")
     neural_norm = normalize_neural(neural, train_idx)
 
     # ------------------------------------------------------------------
-    # 3. Poisson HMM alignment (optional)
+    # 3. Poisson HMM alignment 
     # ------------------------------------------------------------------
     alignment_conditions = {"Gaussian HMM (Willett)": gauss_labels}
 
@@ -449,15 +477,16 @@ def main():
 
     X_train = neural_norm[train_idx]
     X_test = neural_norm[test_idx]
-    T = X_train.shape[1]
     N_CH = X_train.shape[2]  # 192
 
     results = {}  # {(alignment, decoder): metrics}
 
+    # Reference sentences for the test set (actual prompt text)
+    ref_sentences_test = [str(data["sentences"][i]) for i in test_idx]
+
     for align_name, labels in alignment_conditions.items():
         y_train = labels[train_idx]
         y_test = labels[test_idx]
-        char_seqs_test = [data["char_seqs"][i] for i in test_idx]
 
         print(f"\n{'=' * 60}")
         print(f"Alignment: {align_name}")
@@ -472,7 +501,8 @@ def main():
                 )
                 metrics = train_and_evaluate(
                     f"GRU ({align_name})", dec,
-                    X_train, y_train, X_test, y_test, char_seqs_test,
+                    X_train, y_train, X_test, y_test, [],
+                    ref_sentences_test,
                     epochs=epochs, batch_size=batch_size, lr=1e-3,
                 )
                 results[(align_name, "GRU")] = metrics
@@ -486,7 +516,8 @@ def main():
                 )
                 metrics = train_and_evaluate(
                     f"RCNN ({align_name})", dec,
-                    X_train, y_train, X_test, y_test, char_seqs_test,
+                    X_train, y_train, X_test, y_test, [],
+                    ref_sentences_test,
                     epochs=epochs, batch_size=batch_size, lr=1e-3,
                 )
                 results[(align_name, "RCNN")] = metrics
@@ -501,7 +532,8 @@ def main():
                 )
                 metrics = train_and_evaluate(
                     f"Conformer ({align_name})", dec,
-                    X_train, y_train, X_test, y_test, char_seqs_test,
+                    X_train, y_train, X_test, y_test, [],
+                    ref_sentences_test,
                     epochs=epochs, batch_size=batch_size, lr=5e-4,
                     warmup_steps=100,
                 )
@@ -520,42 +552,14 @@ def main():
                 # CTC targets: list of char index arrays (1-indexed)
                 y_tr_ctc = [np.array(data["char_seqs"][i], dtype=np.int64) + 1
                             for i in train_idx]
-                print(f"\n  Training CTC (alignment-free)...")
-                t0 = time.time()
-                dec.fit(X_train, y_tr_ctc,
-                        epochs=epochs, batch_size=batch_size, lr=1e-3)
-                dt = time.time() - t0
-
-                from decoders.ctc_decoder import ctc_greedy_decode
-                log_probs = dec.predict(X_test)
-                decoded = ctc_greedy_decode(log_probs, blank=0)
-
-                pred_strings = []
-                for seq in decoded:
-                    chars = [CHAR_ABBREV[i - 1] if 0 < i <= len(CHAR_ABBREV)
-                             else "?" for i in seq]
-                    pred_strings.append("".join(chars))
-
-                ref_strings = []
-                for i in test_idx:
-                    chars = [CHAR_ABBREV[c] for c in data["char_seqs"][i]]
-                    ref_strings.append("".join(chars))
-
-                for k in range(min(3, len(pred_strings))):
-                    print(f"    [{k}] ref:  {ref_strings[k][:60]}")
-                    print(f"         pred: {pred_strings[k][:60]}")
-
-                from benchmarks.evaluate import (
-                    compute_character_error_rate, compute_word_error_rate)
-                cer = compute_character_error_rate(pred_strings, ref_strings)
-                wer = compute_word_error_rate(
-                    [s.replace(">", " ") for s in pred_strings],
-                    [s.replace(">", " ") for s in ref_strings],
+                metrics = train_and_evaluate(
+                    "CTC (alignment-free)", dec,
+                    X_train, y_tr_ctc, X_test, y_test, [],
+                    ref_sentences_test,
+                    is_ctc=True,
+                    epochs=epochs, batch_size=batch_size, lr=1e-3,
                 )
-                results[("No alignment", "CTC")] = {
-                    "cer": cer, "wer": wer,
-                    "frame_acc": 1.0 - cer, "train_time": dt,
-                }
+                results[("No alignment", "CTC")] = metrics
 
     # ------------------------------------------------------------------
     # 5. Results table
