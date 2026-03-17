@@ -493,6 +493,7 @@ def main():
         print(f"{'=' * 60}")
 
         for dec_name in args.decoders:
+          try:
             if dec_name == "gru":
                 from decoders.rnn_decoder import RNNDecoder
                 dec = RNNDecoder(
@@ -524,6 +525,9 @@ def main():
 
             elif dec_name == "conformer":
                 from decoders.transformer_decoder import TransformerDecoder
+                # Conformer self-attention is O(T^2) memory — use smaller
+                # batch size to avoid OOM on long sequences
+                conf_batch = max(1, batch_size // 4)
                 dec = TransformerDecoder(
                     n_inputs=N_CH, n_outputs=N_CHARS,
                     d_model=d_model, n_heads=n_heads,
@@ -534,7 +538,7 @@ def main():
                     f"Conformer ({align_name})", dec,
                     X_train, y_train, X_test, y_test, [],
                     ref_sentences_test,
-                    epochs=epochs, batch_size=batch_size, lr=5e-4,
+                    epochs=epochs, batch_size=conf_batch, lr=5e-4,
                     warmup_steps=100,
                 )
                 results[(align_name, "Conformer")] = metrics
@@ -560,6 +564,13 @@ def main():
                     epochs=epochs, batch_size=batch_size, lr=1e-3,
                 )
                 results[("No alignment", "CTC")] = metrics
+
+          except Exception as e:
+                print(f"\n  WARNING: {dec_name} failed: {e}")
+                print(f"  Skipping and continuing...")
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     # ------------------------------------------------------------------
     # 5. Results table
