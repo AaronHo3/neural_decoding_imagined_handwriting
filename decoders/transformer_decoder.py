@@ -255,7 +255,14 @@ class TransformerDecoder(BaseDecoder):
         optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=lr, weight_decay=1e-2,
         )
-        criterion = nn.CrossEntropyLoss(ignore_index=-1)
+
+        y_arr = np.asarray(y)
+        soft_mode = y_arr.ndim == 3
+        if soft_mode:
+            y_t = torch.FloatTensor(y_arr.astype(np.float32))
+        else:
+            criterion = nn.CrossEntropyLoss(ignore_index=-1)
+            y_t = torch.LongTensor(y_arr.astype(np.int64))
 
         # Linear warmup + cosine annealing schedule
         total_steps = max(1, (len(X) // batch_size) * epochs)
@@ -269,7 +276,6 @@ class TransformerDecoder(BaseDecoder):
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda)
 
         X_t = torch.FloatTensor(np.asarray(X, dtype=np.float32))
-        y_t = torch.LongTensor(np.asarray(y, dtype=np.int64))
         n = len(X_t)
 
         self.model.train()
@@ -285,10 +291,16 @@ class TransformerDecoder(BaseDecoder):
 
                 optimizer.zero_grad()
                 logits = self.model(xb)  # (B, T, C)
-                loss = criterion(
-                    logits.reshape(-1, self.n_outputs),
-                    yb.reshape(-1),
-                )
+                if soft_mode:
+                    log_probs = torch.log_softmax(logits, dim=-1)
+                    per_frame = -(yb * log_probs).sum(dim=-1)
+                    mask = yb.sum(dim=-1) > 0.5
+                    loss = per_frame[mask].mean() if mask.any() else per_frame.mean()
+                else:
+                    loss = criterion(
+                        logits.reshape(-1, self.n_outputs),
+                        yb.reshape(-1),
+                    )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 5.0)
                 optimizer.step()

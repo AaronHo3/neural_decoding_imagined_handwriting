@@ -103,13 +103,19 @@ def load_sentence_data(
     if max_len > 0 and neural.shape[1] > max_len:
         neural = neural[:, :max_len, :]
         gauss_labels = gauss_labels[:, :max_len]
+        char_prob_target = char_prob_target[:, :max_len, :]
         ignore_mask = ignore_mask[:, :max_len]
         seq_lens = np.minimum(seq_lens, max_len)
+
+    # --- Prepare soft targets (zero out ignored positions) ---
+    soft_targets = char_prob_target.copy()
+    soft_targets[ignore_mask] = 0.0
 
     return {
         "neural": neural,
         "seq_lens": seq_lens,
         "gauss_labels": gauss_labels,
+        "soft_targets": soft_targets,
         "ignore_mask": ignore_mask,
         "sentences": prompts,
         "char_seqs": char_seqs,
@@ -240,6 +246,170 @@ def normalize_neural(
     return (neural - mean) / std
 
 
+def augment_data(X: np.ndarray, y, n_augments: int = 2) -> tuple:
+    """
+    Simple data augmentation: Gaussian noise + random time scaling.
+
+    Works with both hard labels (2D) and soft labels (3D).
+    Returns augmented X, y concatenated with originals.
+    """
+    all_X = [X]
+    all_y = [y]
+
+    for _ in range(n_augments):
+        # Gaussian noise (σ = 10% of data std)
+        noise_std = 0.1 * X.std()
+        X_noisy = X + np.random.randn(*X.shape).astype(np.float32) * noise_std
+        all_X.append(X_noisy)
+        all_y.append(y.copy())
+
+    return np.concatenate(all_X, axis=0), np.concatenate(all_y, axis=0)
+
+
+# ---------------------------------------------------------------------------
+# Simple bigram language model for rescoring
+# ---------------------------------------------------------------------------
+
+class BigramLM:
+    """
+    Character-level bigram LM trained on English text.
+    Used to rescore decoder outputs via beam search.
+    """
+
+    def __init__(self, vocab: list, smoothing: float = 0.1):
+        self.vocab = vocab
+        self.char2idx = {c: i for i, c in enumerate(vocab)}
+        self.n = len(vocab)
+        self.smoothing = smoothing
+        self.log_bigram = None
+        self.log_unigram = None
+
+    def fit(self, texts: list):
+        """Train on list of character sequences (using CHAR_ABBREV encoding)."""
+        counts = np.full((self.n, self.n), self.smoothing)
+        unigram = np.full(self.n, self.smoothing)
+        for text in texts:
+            for i, c in enumerate(text):
+                idx = self.char2idx.get(c, -1)
+                if idx >= 0:
+                    unigram[idx] += 1
+                    if i > 0:
+                        prev = self.char2idx.get(text[i - 1], -1)
+                        if prev >= 0:
+                            counts[prev, idx] += 1
+        # Normalise to log probabilities
+        self.log_unigram = np.log(unigram / unigram.sum())
+        row_sums = counts.sum(axis=1, keepdims=True)
+        self.log_bigram = np.log(counts / row_sums)
+
+    def score(self, text: str) -> float:
+        """Log-probability of a character string."""
+        if not text:
+            return -100.0
+        score = 0.0
+        for i, c in enumerate(text):
+            idx = self.char2idx.get(c, -1)
+            if idx < 0:
+                score -= 10.0
+                continue
+            if i == 0:
+                score += self.log_unigram[idx]
+            else:
+                prev = self.char2idx.get(text[i - 1], -1)
+                if prev >= 0:
+                    score += self.log_bigram[prev, idx]
+                else:
+                    score += self.log_unigram[idx]
+        return score
+
+    def rescore_beam(self, candidates: list, lm_weight: float = 0.3) -> str:
+        """Pick best candidate from list of (string, acoustic_score) tuples."""
+        if not candidates:
+            return ""
+        best, best_score = candidates[0][0], -float("inf")
+        for text, ac_score in candidates:
+            combined = ac_score + lm_weight * self.score(text)
+            if combined > best_score:
+                best_score = combined
+                best = text
+        return best
+
+
+def _beam_decode(logits: np.ndarray, active_mask: np.ndarray,
+                 beam_width: int = 10) -> list:
+    """
+    Simple frame-level beam search.
+    Returns list of (string, score) candidates.
+    """
+    from scipy.ndimage import uniform_filter1d
+    from scipy.special import softmax, log_softmax
+
+    if not active_mask.any():
+        return [("", 0.0)]
+
+    probs = softmax(logits[active_mask], axis=-1)
+    T = probs.shape[0]
+    if T < 10:
+        return [("", 0.0)]
+
+    window = min(51, T // 3)
+    if window < 3:
+        window = 3
+    smoothed = uniform_filter1d(probs, size=window, axis=0)
+    log_sm = np.log(smoothed + 1e-10)
+
+    # Get top-k per frame
+    top_k = min(3, smoothed.shape[1])
+    min_run = max(5, T // 100)
+
+    # Simple: generate candidates by varying the argmax at ambiguous positions
+    pred_ids = smoothed.argmax(axis=1)
+
+    # Base candidate from argmax
+    candidates = []
+    for shift in range(min(beam_width, top_k)):
+        # Use nth-best at each frame
+        sorted_ids = np.argsort(-smoothed, axis=1)
+        candidate_ids = sorted_ids[:, min(shift, sorted_ids.shape[1] - 1)]
+
+        # Collapse runs
+        runs = []
+        cur_val, cur_start = candidate_ids[0], 0
+        score = log_sm[0, candidate_ids[0]]
+        for i in range(1, len(candidate_ids)):
+            score += log_sm[i, candidate_ids[i]]
+            if candidate_ids[i] != cur_val:
+                runs.append((cur_val, i - cur_start))
+                cur_val, cur_start = candidate_ids[i], i
+        runs.append((cur_val, len(candidate_ids) - cur_start))
+
+        chars = []
+        for val, length in runs:
+            if length >= min_run and 0 <= val < len(CHAR_ABBREV):
+                chars.append(CHAR_ABBREV[val])
+        text = "".join(chars)
+        avg_score = score / T
+        candidates.append((text, float(avg_score)))
+
+    # Also add the original argmax-based candidate
+    runs = []
+    cur_val, cur_start = pred_ids[0], 0
+    for i in range(1, len(pred_ids)):
+        if pred_ids[i] != cur_val:
+            runs.append((cur_val, i - cur_start))
+            cur_val, cur_start = pred_ids[i], i
+    runs.append((cur_val, len(pred_ids) - cur_start))
+    chars = []
+    for val, length in runs:
+        if length >= min_run and 0 <= val < len(CHAR_ABBREV):
+            chars.append(CHAR_ABBREV[val])
+    base_text = "".join(chars)
+    base_score = float(np.mean([log_sm[t, pred_ids[t]] for t in range(T)]))
+    candidates.append((base_text, base_score))
+
+    return candidates
+
+
 def _smooth_and_decode(logits: np.ndarray, active_mask: np.ndarray) -> str:
     """
     Convert frame-level logits to a character string using probability
@@ -303,9 +473,16 @@ def train_and_evaluate(
     char_seqs_test: List[List[int]],
     ref_sentences: List[str],
     is_ctc: bool = False,
+    lm: BigramLM = None,
+    y_test_hard: np.ndarray = None,
     **fit_kwargs,
 ) -> Dict[str, float]:
-    """Train a decoder and evaluate on the test set."""
+    """Train a decoder and evaluate on the test set.
+
+    Args:
+        y_test_hard: hard labels (2D) for frame accuracy when y_test is soft (3D).
+        lm: optional BigramLM for rescoring decoded sequences.
+    """
     from benchmarks.evaluate import (
         compute_character_error_rate,
         compute_word_error_rate,
@@ -320,6 +497,9 @@ def train_and_evaluate(
     # Predict
     logits = decoder.predict(X_test)  # (B, T, C)
 
+    # For frame accuracy, always use hard labels
+    y_eval = y_test_hard if y_test_hard is not None else y_test
+
     if is_ctc:
         from decoders.ctc_decoder import ctc_greedy_decode
         log_probs = logits  # already log-softmax
@@ -331,11 +511,19 @@ def train_and_evaluate(
                      for i in seq]
             pred_strings.append("".join(chars))
     else:
-        # Frame-level: smooth probabilities, then collapse to string
+        # Frame-level: beam decode with LM rescoring, or smooth decode
         pred_strings = []
-        for i in range(len(y_test)):
-            active = y_test[i] >= 0
-            pred_strings.append(_smooth_and_decode(logits[i], active))
+        for i in range(logits.shape[0]):
+            if y_eval.ndim == 2:
+                active = y_eval[i] >= 0
+            else:
+                active = y_eval[i].sum(axis=-1) > 0.5
+
+            if lm is not None:
+                candidates = _beam_decode(logits[i], active)
+                pred_strings.append(lm.rescore_beam(candidates, lm_weight=0.3))
+            else:
+                pred_strings.append(_smooth_and_decode(logits[i], active))
 
     # Reference strings from actual sentence prompts (NOT from collapsing
     # frame labels — that merges repeated characters like "ll" in "hello")
@@ -360,14 +548,23 @@ def train_and_evaluate(
         [s.replace(">", " ").replace("~", ".") for s in ref_strings],
     )
 
-    # Frame accuracy on active timesteps
+    # Frame accuracy on active timesteps (always use hard labels)
     if not is_ctc:
         pred_all = logits.argmax(axis=-1)
-        active_mask = y_test >= 0
-        if active_mask.any():
-            frame_acc = float((pred_all[active_mask] == y_test[active_mask]).mean())
+        if y_eval.ndim == 2:
+            active_mask = y_eval >= 0
+            if active_mask.any():
+                frame_acc = float((pred_all[active_mask] == y_eval[active_mask]).mean())
+            else:
+                frame_acc = 0.0
         else:
-            frame_acc = 0.0
+            # y_eval is soft (3D) — convert to hard for accuracy
+            hard = y_eval.argmax(axis=-1)
+            active_mask = y_eval.sum(axis=-1) > 0.5
+            if active_mask.any():
+                frame_acc = float((pred_all[active_mask] == hard[active_mask]).mean())
+            else:
+                frame_acc = 0.0
     else:
         frame_acc = 1.0 - cer
 
@@ -455,7 +652,10 @@ def main():
     # ------------------------------------------------------------------
     # 3. Poisson HMM alignment 
     # ------------------------------------------------------------------
-    alignment_conditions = {"Gaussian HMM (Willett)": gauss_labels}
+    alignment_conditions = {
+        "Gaussian Soft (Willett)": data["soft_targets"],  # 3D soft probs
+        "Gaussian Hard (Willett)": gauss_labels,           # 2D hard labels
+    }
 
     if not args.skip_poisson:
         print("\n[3/5] Running Poisson HMM alignment...")
@@ -479,7 +679,25 @@ def main():
     X_test = neural_norm[test_idx]
     N_CH = X_train.shape[2]  # 192
 
+    # Hard labels for frame accuracy evaluation (always needed)
+    gauss_hard_test = gauss_labels[test_idx]
+
     results = {}  # {(alignment, decoder): metrics}
+
+    # --- Train bigram LM on training sentence prompts ---
+    print("\n  Training bigram language model on training sentences...")
+    lm = BigramLM(vocab=list(CHAR_ABBREV))
+    train_texts = []
+    for i in train_idx:
+        s = str(data["sentences"][i])
+        chars = []
+        for c in s:
+            full = _ABBREV_TO_FULL.get(c, c)
+            if full in CHAR_TO_IDX:
+                chars.append(c)
+        train_texts.append("".join(chars))
+    lm.fit(train_texts)
+    print(f"  LM trained on {len(train_texts)} sentences")
 
     # Reference sentences for the test set (actual prompt text)
     ref_sentences_test = [str(data["sentences"][i]) for i in test_idx]
@@ -487,6 +705,11 @@ def main():
     for align_name, labels in alignment_conditions.items():
         y_train = labels[train_idx]
         y_test = labels[test_idx]
+
+        # Data augmentation for training
+        n_aug = 2 if not fast else 1
+        X_train_aug, y_train_aug = augment_data(X_train, y_train, n_augments=n_aug)
+        print(f"\n  Augmented training: {X_train.shape[0]} → {X_train_aug.shape[0]} sentences")
 
         print(f"\n{'=' * 60}")
         print(f"Alignment: {align_name}")
@@ -502,8 +725,9 @@ def main():
                 )
                 metrics = train_and_evaluate(
                     f"GRU ({align_name})", dec,
-                    X_train, y_train, X_test, y_test, [],
-                    ref_sentences_test,
+                    X_train_aug, y_train_aug, X_test, y_test, [],
+                    ref_sentences_test, lm=lm,
+                    y_test_hard=gauss_hard_test,
                     epochs=epochs, batch_size=batch_size, lr=1e-3,
                 )
                 results[(align_name, "GRU")] = metrics
@@ -517,8 +741,9 @@ def main():
                 )
                 metrics = train_and_evaluate(
                     f"RCNN ({align_name})", dec,
-                    X_train, y_train, X_test, y_test, [],
-                    ref_sentences_test,
+                    X_train_aug, y_train_aug, X_test, y_test, [],
+                    ref_sentences_test, lm=lm,
+                    y_test_hard=gauss_hard_test,
                     epochs=epochs, batch_size=batch_size, lr=1e-3,
                 )
                 results[(align_name, "RCNN")] = metrics
@@ -536,8 +761,9 @@ def main():
                 )
                 metrics = train_and_evaluate(
                     f"Conformer ({align_name})", dec,
-                    X_train, y_train, X_test, y_test, [],
-                    ref_sentences_test,
+                    X_train_aug, y_train_aug, X_test, y_test, [],
+                    ref_sentences_test, lm=lm,
+                    y_test_hard=gauss_hard_test,
                     epochs=epochs, batch_size=conf_batch, lr=5e-4,
                     warmup_steps=100,
                 )
@@ -554,12 +780,15 @@ def main():
                     lstm_hidden=lstm_hidden, dropout=0.2,
                 )
                 # CTC targets: list of char index arrays (1-indexed)
+                # Augment X but replicate CTC targets to match
                 y_tr_ctc = [np.array(data["char_seqs"][i], dtype=np.int64) + 1
                             for i in train_idx]
+                y_tr_ctc_aug = y_tr_ctc * (n_aug + 1)  # replicate for augmented data
                 metrics = train_and_evaluate(
                     "CTC (alignment-free)", dec,
-                    X_train, y_tr_ctc, X_test, y_test, [],
-                    ref_sentences_test,
+                    X_train_aug, y_tr_ctc_aug, X_test, y_test, [],
+                    ref_sentences_test, lm=lm,
+                    y_test_hard=gauss_hard_test,
                     is_ctc=True,
                     epochs=epochs, batch_size=batch_size, lr=1e-3,
                 )
