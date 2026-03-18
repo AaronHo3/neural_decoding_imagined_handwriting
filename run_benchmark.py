@@ -594,6 +594,8 @@ def main():
                         help="Which decoders to benchmark")
     parser.add_argument("--skip-poisson", action="store_true",
                         help="Skip Poisson HMM alignment (faster)")
+    parser.add_argument("--multi-session", action="store_true",
+                        help="Train on all available sessions (test on primary)")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -626,6 +628,7 @@ def main():
     print(f"  Partition:  {args.partition}")
     print(f"  Max length: {args.max_len} bins ({args.max_len * 10}ms)")
     print(f"  Mode:       {'full' if args.full else 'fast'}")
+    print(f"  Multi-sess: {args.multi_session}")
     print(f"  Decoders:   {args.decoders}")
     print()
 
@@ -640,8 +643,88 @@ def main():
     train_idx, test_idx = data["train_idx"], data["test_idx"]
     gauss_labels = prepare_labels(data["gauss_labels"], data["ignore_mask"])
 
-    print(f"  Neural shape: {neural.shape}")
+    print(f"  Primary session: {neural.shape}")
     print(f"  Train: {len(train_idx)} sentences, Test: {len(test_idx)} sentences")
+
+    # --- Multi-session: load other sessions for additional training data ---
+    if args.multi_session:
+        print("\n  Loading additional sessions for multi-session training...")
+        datasets_dir = data_dir / "Datasets"
+        hmm_dir = data_dir / "RNNTrainingSteps" / "Step2_HMMLabels" / args.partition
+        part_path = data_dir / "RNNTrainingSteps" / f"trainTestPartitions_{args.partition}.mat"
+        part_raw = _load_mat(part_path)
+
+        extra_neural = []
+        extra_gauss = []
+        extra_soft = []
+        extra_sentences = []
+        extra_char_seqs = []
+        n_extra = 0
+
+        for sess_dir in sorted(datasets_dir.iterdir()):
+            sess = sess_dir.name
+            if not sess_dir.is_dir() or sess == args.session:
+                continue
+            sent_path = sess_dir / "sentences.mat"
+            hmm_path = hmm_dir / f"{sess}_timeSeriesLabels.mat"
+            # Check that both files exist and partition has this session
+            if not sent_path.exists() or not hmm_path.exists():
+                continue
+            train_key = f"{sess}_train"
+            if train_key not in part_raw:
+                continue
+
+            try:
+                sess_data = load_sentence_data(data_dir, sess, args.partition,
+                                               max_len=args.max_len)
+                s_train = sess_data["train_idx"]
+                # Pad/truncate to match primary session time dimension
+                s_neural = sess_data["neural"]
+                s_gauss = prepare_labels(sess_data["gauss_labels"], sess_data["ignore_mask"])
+                s_soft = sess_data["soft_targets"]
+                T_primary = neural.shape[1]
+                T_sess = s_neural.shape[1]
+
+                if T_sess < T_primary:
+                    # Pad with zeros
+                    pad_n = T_primary - T_sess
+                    s_neural = np.pad(s_neural, ((0,0),(0,pad_n),(0,0)))
+                    s_gauss = np.pad(s_gauss, ((0,0),(0,pad_n)), constant_values=-1)
+                    s_soft = np.pad(s_soft, ((0,0),(0,pad_n),(0,0)))
+                elif T_sess > T_primary:
+                    s_neural = s_neural[:, :T_primary, :]
+                    s_gauss = s_gauss[:, :T_primary]
+                    s_soft = s_soft[:, :T_primary, :]
+
+                # Only take training sentences from extra sessions
+                extra_neural.append(s_neural[s_train])
+                extra_gauss.append(s_gauss[s_train])
+                extra_soft.append(s_soft[s_train])
+                for i in s_train:
+                    extra_sentences.append(str(sess_data["sentences"][i]))
+                    extra_char_seqs.append(sess_data["char_seqs"][i])
+
+                n_extra += len(s_train)
+                print(f"    {sess}: +{len(s_train)} training sentences")
+            except Exception as e:
+                print(f"    {sess}: skipped ({e})")
+                continue
+
+        if extra_neural:
+            # Concatenate extra training data
+            extra_neural_all = np.concatenate(extra_neural, axis=0)
+            extra_gauss_all = np.concatenate(extra_gauss, axis=0)
+            extra_soft_all = np.concatenate(extra_soft, axis=0)
+
+            # Store for later use — we'll prepend these to training arrays
+            data["_extra_neural"] = extra_neural_all
+            data["_extra_gauss"] = extra_gauss_all
+            data["_extra_soft"] = extra_soft_all
+            data["_extra_sentences"] = extra_sentences
+            data["_extra_char_seqs"] = extra_char_seqs
+            print(f"  Total extra training data: {n_extra} sentences from {len(extra_neural)} sessions")
+        else:
+            print("  No additional sessions found.")
 
     # ------------------------------------------------------------------
     # 2. Normalize
@@ -679,6 +762,16 @@ def main():
     X_test = neural_norm[test_idx]
     N_CH = X_train.shape[2]  # 192
 
+    # Normalise extra session data using same stats, if available
+    if "_extra_neural" in data:
+        train_data = neural[train_idx]
+        mean = train_data.mean(axis=(0, 1), keepdims=True)
+        std = train_data.std(axis=(0, 1), keepdims=True)
+        std = np.where(std == 0, 1.0, std)
+        extra_neural_norm = (data["_extra_neural"] - mean) / std
+    else:
+        extra_neural_norm = None
+
     # Hard labels for frame accuracy evaluation (always needed)
     gauss_hard_test = gauss_labels[test_idx]
 
@@ -696,6 +789,15 @@ def main():
             if full in CHAR_TO_IDX:
                 chars.append(c)
         train_texts.append("".join(chars))
+    # Also add extra session texts to LM
+    if "_extra_sentences" in data:
+        for s in data["_extra_sentences"]:
+            chars = []
+            for c in s:
+                full = _ABBREV_TO_FULL.get(c, c)
+                if full in CHAR_TO_IDX:
+                    chars.append(c)
+            train_texts.append("".join(chars))
     lm.fit(train_texts)
     print(f"  LM trained on {len(train_texts)} sentences")
 
@@ -706,10 +808,23 @@ def main():
         y_train = labels[train_idx]
         y_test = labels[test_idx]
 
+        # Prepend extra session data if available
+        X_train_combined = X_train
+        y_train_combined = y_train
+        if extra_neural_norm is not None and "Poisson" not in align_name:
+            # Determine which extra labels to use based on alignment type
+            if labels.ndim == 3:  # soft targets
+                extra_labels = data["_extra_soft"]
+            else:  # hard labels
+                extra_labels = data["_extra_gauss"]
+            X_train_combined = np.concatenate([X_train, extra_neural_norm], axis=0)
+            y_train_combined = np.concatenate([y_train, extra_labels], axis=0)
+            print(f"\n  Multi-session training: {X_train.shape[0]} + {extra_neural_norm.shape[0]} = {X_train_combined.shape[0]} sentences")
+
         # Data augmentation for training
         n_aug = 2 if not fast else 1
-        X_train_aug, y_train_aug = augment_data(X_train, y_train, n_augments=n_aug)
-        print(f"\n  Augmented training: {X_train.shape[0]} → {X_train_aug.shape[0]} sentences")
+        X_train_aug, y_train_aug = augment_data(X_train_combined, y_train_combined, n_augments=n_aug)
+        print(f"\n  Augmented training: {X_train_combined.shape[0]} → {X_train_aug.shape[0]} sentences")
 
         print(f"\n{'=' * 60}")
         print(f"Alignment: {align_name}")
@@ -780,9 +895,12 @@ def main():
                     lstm_hidden=lstm_hidden, dropout=0.2,
                 )
                 # CTC targets: list of char index arrays (1-indexed)
-                # Augment X but replicate CTC targets to match
                 y_tr_ctc = [np.array(data["char_seqs"][i], dtype=np.int64) + 1
                             for i in train_idx]
+                # Add extra session CTC targets if multi-session
+                if "_extra_char_seqs" in data:
+                    for seq in data["_extra_char_seqs"]:
+                        y_tr_ctc.append(np.array(seq, dtype=np.int64) + 1)
                 y_tr_ctc_aug = y_tr_ctc * (n_aug + 1)  # replicate for augmented data
                 metrics = train_and_evaluate(
                     "CTC (alignment-free)", dec,
