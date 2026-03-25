@@ -8,25 +8,35 @@ A systematic comparison of decoder architectures and alignment strategies for br
 
 ## Key Results
 
+### Multi-Session Training (574 sentences from 10 sessions)
+
+| Decoder | Alignment | CER (%) | WER (%) | Frame Acc (%) |
+|---------|-----------|---------|---------|---------------|
+| **Conformer** | **Gaussian Hard** | **55.86** | **71.98** | **80.4** |
+| RCNN | Gaussian Hard | 60.04 | 85.05 | 73.5 |
+| RCNN | Gaussian Soft | 60.69 | 80.60 | 72.7 |
+| Conformer | Gaussian Soft | 60.79 | 81.10 | 80.4 |
+| GRU | Gaussian Hard | 71.91 | 94.07 | 60.2 |
+| CTC | None (alignment-free) | 85.75 | 98.62 | 14.3 |
+
+### Single-Session Training (89 sentences)
+
 | Decoder | Alignment | CER (%) | WER (%) | Frame Acc (%) |
 |---------|-----------|---------|---------|---------------|
 | **RCNN** | **Gaussian Hard** | **65.97** | **88.06** | 64.7 |
 | RCNN | Gaussian Soft | 67.63 | 92.95 | **66.5** |
 | GRU | Gaussian Soft | 73.69 | 90.78 | 61.3 |
-| GRU | Gaussian Hard | 78.51 | 93.76 | 56.3 |
-| CTC | None (alignment-free) | 82.77 | 110.98 | 17.2 |
-| Conformer | Gaussian Soft | 85.06 | 98.00 | 55.6 |
 | Conformer | Gaussian Hard | 85.50 | 100.00 | 56.9 |
-| RCNN | Poisson HMM | 83.35 | 100.00 | 25.1 |
 
-*Single session (89 train / 10 test sentences), 80 epochs, NVIDIA T4 GPU. See [RESULTS.md](RESULTS.md) for the full paper.*
+*80 epochs, NVIDIA T4 GPU. See [RESULTS.md](RESULTS.md) for the full paper.*
 
 ### Key Findings
 
-1. **RCNN outperforms all architectures** in the low-data regime — 12.5 pp better CER than GRU with the same alignment
-2. **Soft probability targets** from HMM alignment improve frame accuracy by 1.8-5.0 pp over hard labels at zero additional cost
-3. **Conformer overfits** with limited data — competitive frame accuracy (57%) but poor sequence-level output, an important negative result
+1. **Architecture ranking reverses with more data** — RCNN is best with 89 sentences (65.97% CER), but Conformer becomes best with 574 sentences (55.86% CER), improving by 29.6 pp
+2. **Multi-session training yields large gains** — best CER improved from 65.97% to 55.86% (10.1 pp) by aggregating data across 10 recording sessions
+3. **Soft probability targets** from HMM alignment improve frame accuracy by 1.8-5.0 pp over hard labels at zero additional cost
 4. **Alignment quality dominates** — Poisson HMM underperforms Gaussian by 17+ pp, showing template quality matters more than emission model choice
+5. **Conformer's data-scaling curve is dramatically steeper** than RCNN's (-29.6 pp vs -5.9 pp), confirming attention-based models are data-hungry but data-responsive
 
 ---
 
@@ -75,7 +85,7 @@ neural_decoding_imagined_handwriting/
 │   └── compare.py              # Comparison orchestration
 ├── data/                       # Data pipeline
 │   ├── loader.py               # Willett dataset loader
-│   └── preprocessing.py        # Binning, normalisation
+│   └── preprocessing.py        # Binning, normalization
 ├── run_benchmark.py            # Main experiment script
 ├── benchmark_colab.ipynb       # Google Colab notebook (GPU)
 ├── download_data.sh            # Dataset download helper
@@ -106,8 +116,11 @@ Or download manually from [Dryad](https://doi.org/10.5061/dryad.wh70rxwmv) (~1.4
 # Fast run (~5 min on GPU)
 python3 run_benchmark.py --max-len 1500 --skip-poisson --decoders gru rcnn
 
-# Full run (~30 min on GPU)
+# Full run (~30 min on GPU, single session)
 python3 run_benchmark.py --full --max-len 3000
+
+# Full run with multi-session training (~11 hours on GPU)
+python3 run_benchmark.py --full --max-len 3000 --multi-session --skip-poisson
 ```
 
 ### 4. Run on Google Colab (recommended)
@@ -124,6 +137,7 @@ Open `benchmark_colab.ipynb` in Colab with a T4 GPU runtime. Upload `handwriting
 | Alignment | Gaussian HMM | Gaussian + Poisson HMM |
 | Labels | Hard (argmax) | Hard + soft probability targets |
 | Language model | RNN-LM | Bigram LM with beam search |
+| Training | Multi-session, 1000s of epochs | Multi-session (10 sessions), 80 epochs |
 | Focus | Maximum accuracy | Controlled architectural comparison |
 
 ---
