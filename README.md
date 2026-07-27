@@ -15,6 +15,8 @@ decoding error that stage is actually responsible for.**
 
 📄 **[Research plan](docs/RESEARCH_PLAN.md)**: questions, hypotheses, and analysis
 procedure, written before the experiments were run.
+📓 **[Lab notebook](docs/LAB_NOTEBOOK.md)**: dated record of what was done, why, and what
+it showed, including the decisions that turned out to be wrong.
 
 ---
 
@@ -23,15 +25,50 @@ procedure, written before the experiments were run.
 | | |
 |---|---|
 | **Research plan** | Complete, hypotheses and analysis fixed in advance |
-| **Infrastructure** | Complete: 4 decoders, 2 aligners, seeded, artifact-emitting, 33 tests passing |
-| **RQ1** alignment error budget | Experiment implemented; sweep not yet run |
+| **Infrastructure** | Complete: 4 decoders, 2 aligners, seeded, artifact-emitting, 37 tests passing |
+| **RQ1** alignment error budget | 108 runs committed. Main hypothesis **refuted** by its own control, see below |
 | **RQ2** cross-session calibration | Not yet implemented |
 | **RQ3** alignment-free (CTC) crossover | Not yet implemented |
 | **Preliminary results** | [`docs/RESULTS.md`](docs/RESULTS.md), exploratory only, see caveats |
 
-This README makes no accuracy claims. Results appear here only once they are backed by
-committed artifacts in `results/` and reproduced across three seeds. Earlier exploratory
-numbers are in [`docs/RESULTS.md`](docs/RESULTS.md), labelled with their known defects.
+Every number below traces to a committed artifact in `results/`, is reproduced across three
+seeds, and is re-derived by `analysis/analyze_exp1.py` rather than transcribed by hand.
+`tests/test_results_integrity.py` fails if any of them drift.
+
+---
+
+## Current findings
+
+**The headline hypothesis was refuted by its own control, and the reason is the more useful
+result.**
+
+RQ1 asked whether frame-label quality dominates decoder architecture. Swept at 1500-bin
+sequences (90 runs), it looked strongly supported: architecture spread was 1.96 pp, *below*
+the 2.22 pp seed noise floor, while label corruption moved CER by 7.80 pp.
+
+A follow-up control at full 3000-bin sequences (18 runs) inverted it:
+
+| | 1500 bins | 3000 bins |
+|---|---|---|
+| Architecture spread | 1.96 pp | **13.64 pp** |
+| Label effect | 7.80 pp | 13.45 pp |
+| Seed noise floor | 2.22 pp | 3.57 pp |
+| Label / architecture | 3.98x | **0.99x** |
+
+At full length the decoders separate enormously on clean labels (RCNN 67.3%, GRU 74.2%,
+Conformer 86.5%). **Truncating sequences was compressing character error rate toward a
+ceiling and erasing the architecture signal.**
+
+Two things follow. Label quality has a large, real effect (13.45 pp, 3.8x the noise floor)
+but does *not* dominate; architecture is comparable in size. And more usefully:
+**sequence truncation is a confound that can invert an architecture conclusion on this
+dataset**, so benchmarks run at reduced sequence length may be measuring the ceiling rather
+than the model.
+
+The 1500-bin RQ1 results are retained as the evidence for that confound. They are not valid
+for architecture comparison, and RQ1 is being re-run at full length before any of it is
+written up. The interpretation rule that produced this verdict was fixed in writing before
+the control ran ([research plan section 8](docs/RESEARCH_PLAN.md)).
 
 ---
 
@@ -75,14 +112,16 @@ from the preliminary work.
 ```
 ├── docs/
 │   ├── RESEARCH_PLAN.md      # questions, hypotheses, design (written first)
+│   ├── LAB_NOTEBOOK.md       # dated record of decisions and what they showed
 │   └── RESULTS.md            # preliminary writeup (caveated)
 ├── experiments/              # one script per research question
 │   └── exp1_alignment_sensitivity.py
 ├── analysis/
-│   └── make_figures.py       # the ONLY path from artifacts to figures
+│   ├── make_figures.py       # the ONLY path from artifacts to figures
+│   └── analyze_exp1.py       # re-derives every RQ1 number from artifacts
 ├── results/                  # committed JSON, one per run (config + git SHA + seed)
 ├── figures/                  # generated; never hand-edited
-├── tests/                    # 33 tests
+├── tests/                    # 37 tests, incl. results-integrity checks
 ├── verify_data.py            # check a dataset tree before spending GPU time
 │
 ├── alignment/                # forced alignment
