@@ -39,36 +39,59 @@ seeds, and is re-derived by `analysis/analyze_exp1.py` rather than transcribed b
 
 ## Current findings
 
-**The headline hypothesis was refuted by its own control, and the reason is the more useful
-result.**
+RQ1 is complete: **198 runs** across two sequence-length regimes, three decoders, two
+corruption models, five severity levels, three seeds. The pre-registered hypothesis was
+refuted, and the two findings that survived are more useful than it was.
 
-RQ1 asked whether frame-label quality dominates decoder architecture. Swept at 1500-bin
-sequences (90 runs), it looked strongly supported: architecture spread was 1.96 pp, *below*
-the 2.22 pp seed noise floor, while label corruption moved CER by 7.80 pp.
+### 1. Alignment error *type* matters more than alignment error *rate*
 
-A follow-up control at full 3000-bin sequences (18 runs) inverted it:
+Displacing character boundaries so that up to 17% of frame labels change has **no
+measurable effect** on the best decoder (RCNN: -1.0, -0.7, -0.7 pp at 4%, 8%, 17% of frames
+displaced). Corrupting the same proportion of labels to the *wrong character* costs +2.8,
++4.6 and +6.8 pp, rising immediately and roughly linearly.
 
-| | 1500 bins | 3000 bins |
-|---|---|---|
-| Architecture spread | 1.96 pp | **13.64 pp** |
-| Label effect | 7.80 pp | 13.45 pp |
-| Seed noise floor | 2.22 pp | 3.57 pp |
-| Label / architecture | 3.98x | **0.99x** |
+| Decoder | Boundary jitter | Identity corruption | Ratio |
+|---|---|---|---|
+| GRU | +5.5 pp | +18.3 pp | 3.3x |
+| RCNN | +7.1 pp | +17.1 pp | 2.4x |
+| Conformer | +0.5 pp | +5.0 pp | 10.8x |
 
-At full length the decoders separate enormously on clean labels (RCNN 67.3%, GRU 74.2%,
-Conformer 86.5%). **Truncating sequences was compressing character error rate toward a
-ceiling and erasing the architecture signal.**
+**A forced aligner does not need to be temporally precise. It needs to be
+identity-correct.** That is an actionable target for alignment design, and it is the
+substantive result of RQ1.
 
-Two things follow. Label quality has a large, real effect (13.45 pp, 3.8x the noise floor)
-but does *not* dominate; architecture is comparable in size. And more usefully:
-**sequence truncation is a confound that can invert an architecture conclusion on this
-dataset**, so benchmarks run at reduced sequence length may be measuring the ceiling rather
-than the model.
+### 2. Sequence truncation can invert an architecture conclusion
 
-The 1500-bin RQ1 results are retained as the evidence for that confound. They are not valid
-for architecture comparison, and RQ1 is being re-run at full length before any of it is
-written up. The interpretation rule that produced this verdict was fixed in writing before
-the control ran ([research plan section 8](docs/RESEARCH_PLAN.md)).
+Run at 1500-bin sequences, architecture spread was 1.96 pp, *below* the 2.22 pp seed noise
+floor: the decoders looked indistinguishable. Re-run at full 3000-bin length, the same grid
+gives a 17.55 pp architecture spread, and the decoders separate cleanly (RCNN 67.3%, GRU
+74.2%, Conformer 86.5% on clean labels).
+
+Truncation was compressing character error rate toward a ceiling and erasing the signal.
+Benchmarks on this dataset at reduced sequence length may be measuring the ceiling rather
+than the model. Both grids are committed as paired evidence.
+
+### 3. The pre-registered hypothesis was refuted (and inverted)
+
+H1c predicted label quality would dominate architecture. Over the full-length grid:
+
+| | Full grid, 3000 bins |
+|---|---|
+| Architecture spread | **17.55 pp** |
+| Label-quality spread | 9.41 pp |
+| Seed noise floor | 4.17 pp |
+| Label / architecture | **0.54x** |
+
+Both effects clear the noise floor, so both are real, but architecture dominates by roughly
+two to one. H1d (unstable ranking) was also refuted: RCNN is best at 9 of 10 levels.
+
+The interpretation rule that produced this verdict was written down *before* the control
+ran ([research plan section 8](docs/RESEARCH_PLAN.md)), and the original hypotheses are
+left unedited. [`docs/LAB_NOTEBOOK.md`](docs/LAB_NOTEBOOK.md) records how it unfolded.
+
+*Reproducibility: 18 conditions were independently run twice and produced bit-identical
+CERs, so the pipeline is deterministic given a seed and the noise floor above reflects
+initialisation variance alone.*
 
 ---
 

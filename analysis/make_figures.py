@@ -63,7 +63,8 @@ def summarise(runs: List[Dict], key_fields: tuple) -> Dict[tuple, Dict]:
     return summary
 
 
-def figure_exp1(runs: List[Dict]) -> None:
+def figure_exp1(runs: List[Dict], stem: str = "exp1_alignment_sensitivity",
+                label: str = "") -> None:
     """RQ1: CER dose-response against each corruption model."""
     import matplotlib.pyplot as plt
 
@@ -103,13 +104,15 @@ def figure_exp1(runs: List[Dict]) -> None:
         ax.grid(alpha=0.25, linewidth=0.6)
         ax.spines[["top", "right"]].set_visible(False)
 
+    suffix = f" [{label}]" if label else ""
     fig.suptitle(
-        "RQ1: label quality vs. decoder architecture (n=10 test sentences, 3 seeds)",
+        "RQ1: label quality vs. decoder architecture "
+        f"(n=10 test sentences, 3 seeds){suffix}",
         y=1.02,
     )
     fig.tight_layout()
     FIGURES.mkdir(parents=True, exist_ok=True)
-    out = FIGURES / "exp1_alignment_sensitivity.png"
+    out = FIGURES / f"{stem}.png"
     fig.savefig(out, dpi=200, bbox_inches="tight")
     print(f"  wrote {out}")
 
@@ -152,17 +155,30 @@ def _report_h1c(summary: Dict[tuple, Dict]) -> None:
     print(f"    -> H1c {verdict}")
 
 
+# RQ1 result sets. The 1500-bin grid is retained as evidence for the truncation
+# confound; the 3000-bin grid is the canonical result.
+EXP1_SETS = [
+    ("exp1_alignment_sensitivity", "exp1_alignment_sensitivity", "1500 bins"),
+    ("exp1_sweep_3000", "exp1_sweep_3000", "3000 bins (full length)"),
+]
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--experiment", default="all", choices=["all", "exp1"])
+    p.add_argument("--subdir", default=None,
+                   help="Plot one specific results/ subdirectory instead of all")
     args = p.parse_args()
 
     if args.experiment in ("all", "exp1"):
-        print("exp1_alignment_sensitivity:")
-        runs = load_artifacts("exp1_alignment_sensitivity")
-        print(f"  loaded {len(runs)} artifacts")
-        if runs:
-            figure_exp1(runs)
+        sets = ([(args.subdir, args.subdir, args.subdir)] if args.subdir
+                else EXP1_SETS)
+        for subdir, stem, label in sets:
+            print(f"{subdir}:")
+            runs = load_artifacts(subdir)
+            print(f"  loaded {len(runs)} artifacts")
+            if runs:
+                figure_exp1(runs, stem=stem, label=label)
 
 
 if __name__ == "__main__":

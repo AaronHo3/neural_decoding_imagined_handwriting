@@ -167,10 +167,18 @@ invert an architecture conclusion on this dataset. Anyone benchmarking decoders 
 Willett's sentences at reduced sequence length may be measuring the ceiling rather than the
 model. The paired 1500/3000 evidence for this is committed.
 
-**Unresolved caveat.** The Conformer got *worse* with more context (77.9% to 86.5%), the
-opposite of the expected direction. Self-attention over 3000 steps at batch size 4 may be
-an optimisation failure rather than an architectural limit. Not to be reported as evidence
-about attention until resolved.
+**Caveat on the Conformer, revised.** First reading was that it got *worse* with more
+context (77.9% to 86.5%), suggesting an optimisation failure at 3000 steps with batch size
+4. On reflection that framing was wrong. At 1500 bins *everything* sat at the ceiling near
+78%, so the Conformer's 77.9% was not a good score, it was a masked bad one. Lifting the
+ceiling let GRU and RCNN improve to 74.2% and 67.3% while the Conformer stayed at 86.5%.
+It did not degrade; it failed to benefit.
+
+That reading is corroborated by the preliminary work, which independently found the
+single-session Conformer at 85.50% and attributed it to overfitting on 89 sentences. Two
+independent runs agreeing makes a genuine data-hunger effect more likely than a training
+bug. Downgraded from a blocking caveat to open question 2; the full-length grid is worth
+running with the Conformer included.
 
 ---
 
@@ -189,6 +197,105 @@ the plan, which is precisely the failure mode identified in the 2026-07-26 audit
 Note on scope: the regime comparison uses matched conditions (corruption endpoints only),
 since that is all the control ran. `make_figures.py` reports the H1c check over the full
 grid instead, so the two scripts legitimately give different spreads. Both are labelled.
+
+---
+
+## 2026-07-27 - Full RQ1 grid at 3000 bins (90 runs) - the canonical result
+
+Re-ran the whole pre-registered grid at full sequence length into
+`results/exp1_sweep_3000`. 90/90 completed, zero failures, 7.7 h of training.
+
+### Determinism check (free, from the 18 overlapping conditions)
+
+The A1 control and this sweep independently ran the same 18 conditions. All 18 CERs are
+**bit-identical**, maximum difference 0.000000 pp. The pipeline is fully deterministic
+given a seed, which means the seed noise floor measures initialisation variance only, with
+no GPU nondeterminism mixed in. Worth knowing before quoting any noise floor.
+
+### H1c: refuted, and inverted
+
+Over the full grid (all 10 level-by-model cells, both corruption models):
+
+| | |
+|---|---|
+| Architecture spread | **17.55 pp** |
+| Label-quality spread | 9.41 pp |
+| Seed noise floor | 4.17 pp |
+| Label / architecture | **0.54x** |
+
+Architecture does not merely fail to be dominated by label quality; it dominates label
+quality by roughly two to one. Both effects clear the noise floor (4.2x and 2.3x
+respectively), so both are real. The central thesis in section 1 is wrong.
+
+RCNN is best at every level in both corruption models, at 67.3% on clean labels versus
+74.2% for GRU and 86.5% for the Conformer.
+
+### H1b: supported, and much stronger at full length
+
+This is now the most interesting result in the study. Clean-to-worst CER change:
+
+| Decoder | Jitter | Corruption | Ratio |
+|---|---|---|---|
+| GRU | +5.5 pp | +18.3 pp | 3.3x |
+| RCNN | +7.1 pp | +17.1 pp | 2.4x |
+| Conformer | +0.5 pp | +5.0 pp | 10.8x |
+
+The RCNN jitter curve is the striking part. Displacing boundaries so that 4%, 8% and 17%
+of frames change their label moves CER by -1.0, -0.7 and -0.7 pp respectively: no effect at
+all, within noise. Only at 31% of frames does it rise, by +7.1 pp. Identity corruption over
+the same range costs +2.8, +4.6, +6.8 and +17.1 pp, rising immediately and roughly linearly.
+
+**Alignment does not need to be temporally precise. It needs to be identity-correct.** For
+a forced aligner that is an actionable design target: spend effort on getting the character
+sequence right, not on tightening boundary placement.
+
+### H1a: split by corruption model
+
+Monotone under identity corruption for GRU and RCNN. Not monotone under jitter for any
+decoder, but that is the H1b result restated rather than a failure: the jitter curve is
+flat within noise until the extreme, so ordering among the flat points is arbitrary. The
+Conformer is non-monotone under corruption too, because it sits near its own ceiling
+throughout.
+
+### H1d: refuted
+
+H1d predicted the ranking would be unstable across perturbation levels. At full length it
+is stable: RCNN < GRU < Conformer at nine of ten levels. The single exception is maximum
+corruption (p = 0.40), where the GRU degrades worst of all and the Conformer edges past it.
+The apparent instability at 1500 bins was noise around a compressed mean, not a real
+interaction. Both the general claim and its specific mechanism are now refuted.
+
+### Caveat
+
+One condition (RCNN, corruption p = 0.05) has an 11.4 pp seed spread, far above the 4.17 pp
+mean. With three seeds and ten test sentences, individual cells remain unstable even though
+the sweep-level trends are clear. Quote trends, not cells.
+
+---
+
+## 2026-07-27 - Analysis pipeline corrected
+
+`analyze_exp1.py` was reporting endpoint-only statistics for every regime, since that is
+what the A1 control could support. Applied to the full 3000-bin grid this understated the
+architecture effect as 13.64 pp instead of 17.55 pp. Added `summarise_full_grid()` and
+`error_type_asymmetry()`, so a regime with the complete grid now reports both the
+endpoint-matched numbers (for cross-regime comparison) and the full-grid numbers (the ones
+to quote for that regime alone). `make_figures.py` now emits one figure per result set.
+
+---
+
+## Where RQ1 stands
+
+Three findings, in decreasing order of how well they are supported:
+
+1. **Alignment error *type* matters more than alignment error *rate*.** Timing errors are
+   nearly free up to roughly 17% of frames; identity errors cost immediately. Survived the
+   regime change and got cleaner. This is the substantive contribution.
+2. **Sequence truncation is a confound that can invert an architecture conclusion** on this
+   dataset. Demonstrated with paired 1500 and 3000-bin grids, 180 runs total. This is the
+   methodological contribution.
+3. **Label quality does not dominate architecture.** The original thesis is refuted and in
+   fact inverted, 0.54x. Reported as a negative result.
 
 ---
 

@@ -40,7 +40,9 @@ CLAIMS = [
     ("3000", "label_over_arch", ".2f", "x"),
 ]
 
-EXPECTED_RUNS = {"1500": 90, "3000": 18}
+# Regimes absent from results/ are skipped, so this stays valid while the
+# full-length grid is still running.
+EXPECTED_RUNS = {"1500": 90, "3000": 18, "3000-full": 90}
 
 
 @pytest.fixture(scope="module")

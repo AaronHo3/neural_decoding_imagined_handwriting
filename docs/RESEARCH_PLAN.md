@@ -274,6 +274,29 @@ regime. Neither outcome is edited into section 2 afterwards.
 
 Run with `python experiments/exp1_alignment_sensitivity.py --control`.
 
+### A2. RQ1 re-run at full sequence length (consequence of A1)
+
+Following A1, the full pre-registered grid was re-run at `--max-len 3000` into
+`results/exp1_sweep_3000`. 90/90 completed. This supersedes the 1500-bin grid as the
+canonical RQ1 result; the 1500-bin grid is retained as evidence for the truncation confound.
+
+Over the full grid: architecture spread **17.55 pp**, label-quality spread **9.41 pp**,
+seed noise floor **4.17 pp**, ratio **0.54x**. H1c is refuted and inverted; architecture
+dominates label quality roughly two to one, with both effects clearing the noise floor.
+
+Hypothesis outcomes at full length, none of them edited above:
+
+| | Outcome |
+|---|---|
+| H1a monotone degradation | Split: holds under identity corruption, not under jitter (jitter is flat within noise until the extreme) |
+| H1b jitter shallow, corruption steep | **Supported, and stronger.** 2.4x to 10.8x steeper by decoder |
+| H1c label quality dominates architecture | **Refuted and inverted** (0.54x) |
+| H1d ranking unstable across levels | **Refuted.** RCNN < GRU < Conformer at 9 of 10 levels |
+
+**Reproducibility check.** A1 and A2 independently ran the same 18 conditions. All 18 CERs
+are bit-identical, so the pipeline is deterministic given a seed and the quoted noise floor
+reflects initialisation variance alone.
+
 **Outcome: the control refuted H1c.** 18/18 runs completed. Applying the rule above without
 modification:
 

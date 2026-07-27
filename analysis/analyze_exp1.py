@@ -32,8 +32,10 @@ DECODERS = ["gru", "rcnn", "conformer"]
 ENDPOINTS = [0.0, 0.40]  # matched conditions for the regime comparison
 
 REGIMES = [
+    # label, results subdirectory, sequence length in 10 ms bins
     ("1500", "exp1_alignment_sensitivity", 1500),
-    ("3000", "exp1_maxlen3000", 3000),
+    ("3000", "exp1_maxlen3000", 3000),          # A1 control, endpoints only
+    ("3000-full", "exp1_sweep_3000", 3000),     # canonical RQ1 grid, once run
 ]
 
 
@@ -90,6 +92,76 @@ def summarise_regime(g: dict, levels: list) -> dict:
         "arch_below_noise": bool(arch < noise) if arch == arch else None,
         "n_runs": sum(len(v) for v in g.values()),
     }
+
+
+def summarise_full_grid(g: dict) -> dict:
+    """
+    Architecture vs label-quality spread using every level of every corruption
+    model, not just the endpoints.
+
+    `summarise_regime` restricts to endpoints so the 1500-bin and 3000-bin
+    regimes can be compared like for like, since the A1 control only ran
+    endpoints. Where a regime has the whole grid, this uses all of it and is the
+    number to quote for that regime on its own.
+    """
+    models = sorted({k[0] for k in g})
+    if len(models) < 2:
+        return {}
+
+    arch_spreads, label_spreads = [], []
+    for model in models:
+        levels = sorted({k[1] for k in g if k[0] == model})
+        for lv in levels:
+            means = [st.mean(cers(g[(model, lv, d)]))
+                     for d in DECODERS if g.get((model, lv, d))]
+            if len(means) > 1:
+                arch_spreads.append(max(means) - min(means))
+        for d in DECODERS:
+            means = [st.mean(cers(g[(model, lv, d)]))
+                     for lv in levels if g.get((model, lv, d))]
+            if len(means) > 1:
+                label_spreads.append(max(means) - min(means))
+
+    seed_spreads = [max(cers(v)) - min(cers(v)) for v in g.values() if len(v) >= 2]
+    arch = st.mean(arch_spreads)
+    label = st.mean(label_spreads)
+    noise = st.mean(seed_spreads)
+
+    return {
+        "mean_arch_spread": arch,
+        "mean_label_spread": label,
+        "seed_noise_floor": noise,
+        "max_seed_spread": max(seed_spreads),
+        "label_over_arch": label / arch if arch else float("nan"),
+        "arch_below_noise": bool(arch < noise),
+        "h1c": "SUPPORTED" if arch < noise else "REFUTED",
+    }
+
+
+def error_type_asymmetry(g: dict) -> dict:
+    """
+    H1b: how much steeper is identity corruption than boundary jitter?
+
+    Compares the clean-to-worst CER change under each corruption model, per
+    decoder. A ratio above 1 means wrong-identity labels cost more than
+    wrong-timing labels for the same nominal severity.
+    """
+    out = {}
+    if not {"jitter", "corrupt"} <= {k[0] for k in g}:
+        return out
+    jl = sorted({k[1] for k in g if k[0] == "jitter"})
+    cl = sorted({k[1] for k in g if k[0] == "corrupt"})
+    for d in DECODERS:
+        try:
+            jd = (st.mean(cers(g[("jitter", jl[-1], d)]))
+                  - st.mean(cers(g[("jitter", jl[0], d)])))
+            cd = (st.mean(cers(g[("corrupt", cl[-1], d)]))
+                  - st.mean(cers(g[("corrupt", cl[0], d)])))
+        except (KeyError, st.StatisticsError):
+            continue
+        out[d] = {"jitter_delta": jd, "corrupt_delta": cd,
+                  "ratio": cd / jd if jd else float("inf")}
+    return out
 
 
 def dose_response(g: dict) -> dict:
@@ -159,6 +231,26 @@ def main() -> int:
         print(f"    label / architecture     : {s['label_over_arch']:6.2f}x")
         print(f"    -> architecture spread is "
               f"{'BELOW' if s['arch_below_noise'] else 'ABOVE'} the noise floor")
+
+        fg = summarise_full_grid(g)
+        if fg:
+            summary["regimes"][label]["full_grid"] = fg
+            print(f"\n    full grid (all levels, both corruption models):")
+            print(f"      architecture spread    : {fg['mean_arch_spread']:6.2f} pp")
+            print(f"      label-quality spread   : {fg['mean_label_spread']:6.2f} pp")
+            print(f"      seed noise floor       : {fg['seed_noise_floor']:6.2f} pp "
+                  f"(max {fg['max_seed_spread']:.2f})")
+            print(f"      label / architecture   : {fg['label_over_arch']:6.2f}x")
+            print(f"      -> H1c {fg['h1c']}")
+
+        asym = error_type_asymmetry(g)
+        if asym:
+            summary["regimes"][label]["error_type_asymmetry"] = asym
+            print(f"\n    H1b, clean to worst (corruption / jitter):")
+            for d, v in asym.items():
+                print(f"      {d:<10} jitter {v['jitter_delta']:+6.1f} pp | "
+                      f"corrupt {v['corrupt_delta']:+6.1f} pp | "
+                      f"{v['ratio']:5.1f}x steeper")
 
     # --- H1c verdict, applying the pre-committed rule from RESEARCH_PLAN A1 ---
     if "3000" in summary["regimes"]:
