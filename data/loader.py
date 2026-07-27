@@ -23,11 +23,11 @@ The loader transparently handles both via h5py / scipy.io.
 
 Data format (singleLetters.mat):
     neuralActivityCube_{char} : (n_trials, 201, 192) uint8 per character
-    characterCues             : (n_total_trials,) object — char name per trial
-    delayPeriodOnsetTimeBin   : (n_total_trials,) — maps trials to timeseries
-    blockNumsTimeSeries       : (T_total,) — block ID per timebin
-    meansPerBlock             : (n_blocks, 192) — per-block firing rate means
-    stdAcrossAllData          : (192,) — global std for z-score
+    characterCues             : (n_total_trials,) object - char name per trial
+    delayPeriodOnsetTimeBin   : (n_total_trials,) - maps trials to timeseries
+    blockNumsTimeSeries       : (T_total,) - block ID per timebin
+    meansPerBlock             : (n_blocks, 192) - per-block firing rate means
+    stdAcrossAllData          : (192,) - global std for z-score
 """
 
 from __future__ import annotations
@@ -144,12 +144,12 @@ class WillettDataset:
 
         Returns:
             dict with keys:
-                neural        : (n_trials, 201, 192) float32 — spike counts
-                char_labels   : (n_trials,) int — 0-indexed character ids
-                char_names    : (n_trials,) str — full character names
-                char_list     : list[str] — full vocabulary (31 chars)
-                char_abbrev   : list[str] — abbreviated vocabulary
-                block_ids     : (n_trials,) int — recording block per trial
+                neural        : (n_trials, 201, 192) float32 - spike counts
+                char_labels   : (n_trials,) int - 0-indexed character ids
+                char_names    : (n_trials,) str - full character names
+                char_list     : list[str] - full vocabulary (31 chars)
+                char_abbrev   : list[str] - abbreviated vocabulary
+                block_ids     : (n_trials,) int - recording block per trial
                 means_per_block   : (n_blocks, 192) float32
                 std_across_all    : (192,) float32
                 session_id        : str
@@ -194,7 +194,7 @@ class WillettDataset:
                 label_list.append(CHAR_TO_IDX.get(cue_str, -1))
                 name_list.append(cue_str)
             else:
-                # Unknown character — skip or use zeros
+                # Unknown character, skip or use zeros
                 neural_list.append(np.zeros((201, 192), dtype=np.float32))
                 label_list.append(-1)
                 name_list.append(cue_str)

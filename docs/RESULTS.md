@@ -4,9 +4,46 @@ Aaron Ho
 
 ---
 
+> ## ⚠️ Status: preliminary, superseded by `docs/RESEARCH_PLAN.md`
+>
+> This writeup reports an exploratory architecture comparison. It is retained
+> because the pipeline it describes is real and the numbers were genuinely
+> produced, but it should **not** be read as a finished result. Four known
+> defects limit what can be concluded from it:
+>
+> 1. **No committed artifacts.** Every number below was transcribed by hand from
+>    console output. No JSON, log, or checkpoint backs them. Runs post-dating the
+>    research plan write artifacts to `results/` and are reproducible; these are not.
+> 2. **No seeds.** The runs were unseeded, so they cannot be reproduced exactly,
+>    and single-run differences cannot be separated from initialisation variance.
+> 3. **n = 10 test sentences, one run per condition.** Differences below roughly
+>    5 CER points are not distinguishable from noise. This affects the headline
+>    Conformer-vs-RCNN gap (4.2 pp) and the soft-vs-hard label effect (1.8 pp),
+>    both of which are reported here as findings and should not be.
+> 4. **Two metric defects.** CTC "frame accuracy" was computed as `1 − CER`, not
+>    an actual frame accuracy. The 14.3% and 17.2% entries are that artefact and
+>    have since been replaced with `n/a`. Separately, Poisson-aligned models had
+>    their frame accuracy scored against *Gaussian* labels, which makes the
+>    §3.4 inference that "alignment quality is the primary bottleneck" circular:
+>    the metric presupposes the Gaussian alignment is correct.
+>
+> A further caveat on §2.3.2: the Poisson aligner assumes non-negative integer
+> spike counts, but the pipeline never asserted this. If the input was z-scored,
+> `gammaln(obs+1)` and `obs·log λ` degrade silently rather than raising, which
+> would explain the catastrophic Poisson results without any appeal to template
+> quality. This was not tested, so §4.2's explanation is unsupported.
+>
+> **What survives.** The implementations (four decoders, two HMM aligners, the
+> decoding and evaluation pipeline) are correct and are reused unchanged. The
+> observation that motivated the current project, that alignment quality appears
+> to dominate architecture choice, originates here, and is now being tested
+> properly rather than asserted.
+
+---
+
 ## Abstract
 
-Brain-computer interfaces (BCIs) that decode imagined handwriting from intracortical neural recordings hold transformative potential for restoring communication in individuals with paralysis. Building on the landmark dataset of Willett et al. (2021), I present a systematic comparison of four neural sequence decoder architectures — GRU, RCNN, CTC, and a novel Conformer-based decoder — evaluated across three frame-level alignment strategies: Willett's pre-computed Gaussian HMM with hard labels, Gaussian HMM with soft probability targets, and a Poisson HMM alignment designed to better model the discrete count statistics of neural spike data. I further investigate the effects of data augmentation, multi-session training, and character-level language model rescoring on decoding accuracy. In single-session experiments (89 training sentences, 10 test sentences), the RCNN decoder with Gaussian hard alignment achieved the lowest character error rate (CER) of 65.97%, while the Conformer exhibited severe overfitting — a finding consistent with the known data-hunger of attention-based models. However, when training data was expanded via multi-session aggregation (574 training sentences from 10 sessions), the Conformer surpassed all other architectures, achieving the best overall CER of 55.86% with Gaussian hard alignment — a 10.1 percentage point improvement over its single-session performance and a dramatic reversal in the architecture ranking. This data-scaling result confirms that the Conformer's self-attention mechanism, while disadvantaged in extreme low-data regimes, becomes the superior architecture once sufficient training diversity is available. Poisson HMM alignment underperformed Gaussian alignment across all decoders (83–90% CER in single-session), suggesting that template estimation quality outweighs emission model correctness. These results provide practical guidance for decoder selection across data availability regimes and highlight both alignment quality and training data volume as primary bottlenecks in neural handwriting decoding pipelines.
+Brain-computer interfaces (BCIs) that decode imagined handwriting from intracortical neural recordings hold transformative potential for restoring communication in individuals with paralysis. Building on the landmark dataset of Willett et al. (2021), I present a systematic comparison of four neural sequence decoder architectures (GRU, RCNN, CTC, and a novel Conformer-based decoder) evaluated across three frame-level alignment strategies: Willett's pre-computed Gaussian HMM with hard labels, Gaussian HMM with soft probability targets, and a Poisson HMM alignment designed to better model the discrete count statistics of neural spike data. I further investigate the effects of data augmentation, multi-session training, and character-level language model rescoring on decoding accuracy. In single-session experiments (89 training sentences, 10 test sentences), the RCNN decoder with Gaussian hard alignment achieved the lowest character error rate (CER) of 65.97%, while the Conformer exhibited severe overfitting, a finding consistent with the known data-hunger of attention-based models. However, when training data was expanded via multi-session aggregation (574 training sentences from 10 sessions), the Conformer surpassed all other architectures, achieving the best overall CER of 55.86% with Gaussian hard alignment, a 10.1 percentage point improvement over its single-session performance and a dramatic reversal in the architecture ranking. This data-scaling result confirms that the Conformer's self-attention mechanism, while disadvantaged in extreme low-data regimes, becomes the superior architecture once sufficient training diversity is available. Poisson HMM alignment underperformed Gaussian alignment across all decoders (83–90% CER in single-session), suggesting that template estimation quality outweighs emission model correctness. These results provide practical guidance for decoder selection across data availability regimes and highlight both alignment quality and training data volume as primary bottlenecks in neural handwriting decoding pipelines.
 
 ---
 
@@ -16,9 +53,9 @@ The ability to decode imagined handwriting from neural activity represents a sig
 
 The Willett pipeline comprises three stages: (1) forced alignment of neural time series to character sequences via a Gaussian hidden Markov model (HMM), producing frame-level character labels; (2) training a GRU-based RNN to map neural features to character probabilities at each time step; and (3) decoding with a recurrent neural network language model (RNNLM) to produce final text. While this pipeline achieved remarkable results, several design choices merit further investigation.
 
-First, the Gaussian emission model used in HMM alignment assumes that neural activity at each time bin is drawn from a multivariate Gaussian distribution. However, the recorded signals represent spike counts — non-negative integers arising from a point process. The Poisson distribution is the canonical model for count data, and Poisson emissions could in principle provide a more faithful generative model of neural spiking, particularly at low firing rates where Gaussian approximations predict non-negligible probability for negative counts.
+First, the Gaussian emission model used in HMM alignment assumes that neural activity at each time bin is drawn from a multivariate Gaussian distribution. However, the recorded signals represent spike counts, non-negative integers arising from a point process. The Poisson distribution is the canonical model for count data, and Poisson emissions could in principle provide a more faithful generative model of neural spiking, particularly at low firing rates where Gaussian approximations predict non-negligible probability for negative counts.
 
-Second, Willett et al. used a single GRU architecture for neural decoding. Recent advances in sequence modeling — particularly the Conformer architecture (Gulati et al., 2020), which combines self-attention with depthwise convolutions — have achieved state-of-the-art results in speech recognition, a domain with structural similarities to neural handwriting decoding (both involve mapping continuous temporal signals to discrete symbol sequences). Whether these architectural advances transfer to the neural decoding domain remains unexplored.
+Second, Willett et al. used a single GRU architecture for neural decoding. Recent advances in sequence modeling, particularly the Conformer architecture (Gulati et al., 2020), which combines self-attention with depthwise convolutions, have achieved state-of-the-art results in speech recognition, a domain with structural similarities to neural handwriting decoding (both involve mapping continuous temporal signals to discrete symbol sequences). Whether these architectural advances transfer to the neural decoding domain remains unexplored.
 
 Third, the original pipeline trained on hard (argmax) frame labels, discarding the soft probability distributions produced by HMM alignment. Training on soft targets provides richer gradient information at character boundaries, where the correct label is inherently ambiguous.
 
@@ -194,9 +231,9 @@ Table 2 presents results when training data was aggregated across 10 recording s
 
 The architecture ranking changed dramatically between single-session and multi-session conditions, revealing a critical interaction between model capacity and data availability.
 
-**Single-session (89 training sentences):** RCNN achieved the lowest CER across alignment conditions (65.97–83.35%), followed by GRU (73.69–90.21%), Conformer (85.06–87.69%), and CTC (82.77%). The RCNN's advantage over the pure GRU is attributable to its convolutional front-end, which extracts local temporal features before recurrent processing. The Conformer achieved competitive frame-level accuracy (55.6–56.9% with Gaussian alignment) but substantially worse CER (85.06–85.50%), exhibiting severe overfitting — producing truncated output strings on longer test sentences despite accurate per-frame predictions. With only 267 effective training examples, the Conformer lacked sufficient diversity to learn robust temporal generalization.
+**Single-session (89 training sentences):** RCNN achieved the lowest CER across alignment conditions (65.97–83.35%), followed by GRU (73.69–90.21%), Conformer (85.06–87.69%), and CTC (82.77%). The RCNN's advantage over the pure GRU is attributable to its convolutional front-end, which extracts local temporal features before recurrent processing. The Conformer achieved competitive frame-level accuracy (55.6–56.9% with Gaussian alignment) but substantially worse CER (85.06–85.50%), exhibiting severe overfitting, producing truncated output strings on longer test sentences despite accurate per-frame predictions. With only 267 effective training examples, the Conformer lacked sufficient diversity to learn robust temporal generalization.
 
-**Multi-session (574 training sentences):** The Conformer surpassed all other architectures, achieving the best overall CER of 55.86% — a 29.6 percentage point improvement over its single-session performance. This reversal in architecture ranking is the most striking finding of this study. With 6.4x more training data (1722 augmented examples vs. 267), the Conformer's self-attention mechanism — which was a liability in the single-session regime — became an asset, enabling it to capture long-range temporal dependencies across diverse sentence structures. The Conformer also achieved the highest frame-level accuracy (80.4%), substantially above RCNN (73.5%) and GRU (60.2%).
+**Multi-session (574 training sentences):** The Conformer surpassed all other architectures, achieving the best overall CER of 55.86%, a 29.6 percentage point improvement over its single-session performance. This reversal in architecture ranking is the most striking finding of this study. With 6.4x more training data (1722 augmented examples vs. 267), the Conformer's self-attention mechanism, which was a liability in the single-session regime, became an asset, enabling it to capture long-range temporal dependencies across diverse sentence structures. The Conformer also achieved the highest frame-level accuracy (80.4%), substantially above RCNN (73.5%) and GRU (60.2%).
 
 The RCNN improved more modestly with additional data (-5.93 pp CER), consistent with its stronger inductive biases already extracting most available signal from limited data. The GRU and CTC showed mixed results, suggesting these simpler architectures may have hit a representational ceiling.
 
@@ -208,7 +245,7 @@ Gaussian HMM alignment (both soft and hard) substantially outperformed Poisson H
 
 Despite the theoretical appeal of Poisson emissions for count data, the Gaussian HMM benefited from Willett et al.'s carefully optimized template estimation pipeline, which included cross-validated template smoothing and session-specific calibration. My Poisson HMM templates were estimated from single-letter data without these refinements, introducing template noise that propagated into alignment errors.
 
-Frame-level accuracy tells a striking story: Gaussian-aligned decoders achieved 56–67% frame accuracy, while Poisson-aligned decoders achieved only 17–25%. This confirms that the alignment quality — not the decoder architecture — is the primary bottleneck for the Poisson condition.
+Frame-level accuracy tells a striking story: Gaussian-aligned decoders achieved 56–67% frame accuracy, while Poisson-aligned decoders achieved only 17–25%. This confirms that alignment quality, not the decoder architecture, is the primary bottleneck for the Poisson condition.
 
 ### 3.5 Effect of Soft vs. Hard Labels
 
@@ -226,11 +263,11 @@ However, the CER results were mixed: GRU benefited from soft labels (73.69% vs. 
 | 2 | have>you>ever>seen>a>large>cat>fold>... | haus>~ou>ewer>faoer>a>k>hardge | have>you>ever>secn>ar,rtd>large>ca |
 | 3 | the>jeep>was>thirsty>so>i>stopped>... | mioe>pljep>was>thinst>asol>i>s | the>jieap>,>was>thirsty>y>yso>i>s |
 
-The multi-session Conformer predictions show dramatically improved word structure preservation compared to both the single-session Conformer (which produced catastrophically truncated outputs like "jtusoatmd>ulg") and the single-session RCNN. In sentence 2, the Conformer correctly decodes "have>you>ever" and "large" — demonstrating that with sufficient training data, the self-attention mechanism successfully captures the sequential structure of handwriting. Sentence 3 shows recognizable multi-word segments ("the>jieap>was>thirsty>so>i>s") that would benefit substantially from a neural language model.
+The multi-session Conformer predictions show dramatically improved word structure preservation compared to both the single-session Conformer (which produced catastrophically truncated outputs like "jtusoatmd>ulg") and the single-session RCNN. In sentence 2, the Conformer correctly decodes "have>you>ever" and "large", demonstrating that with sufficient training data, the self-attention mechanism successfully captures the sequential structure of handwriting. Sentence 3 shows recognizable multi-word segments ("the>jieap>was>thirsty>so>i>s") that would benefit substantially from a neural language model.
 
 ### 3.7 Computational Efficiency
 
-In single-session experiments, the Conformer required approximately 6x longer training time (1854–1867s) compared to GRU and RCNN (281–325s). In multi-session experiments, this gap widened substantially: the Conformer required ~14,000s (~3.9 hours) per condition, compared to ~2,000s (~33 minutes) for GRU and RCNN — a 7x ratio, driven by the quadratic memory complexity of self-attention over T = 3000 time steps with 1722 training examples and the reduced batch size (4 vs. 16) necessitated by GPU memory constraints. The total multi-session benchmark runtime was approximately 11 hours on a single NVIDIA T4 GPU. CTC was the fastest to train owing to its simpler architecture.
+In single-session experiments, the Conformer required approximately 6x longer training time (1854–1867s) compared to GRU and RCNN (281–325s). In multi-session experiments, this gap widened substantially: the Conformer required ~14,000s (~3.9 hours) per condition, compared to ~2,000s (~33 minutes) for GRU and RCNN, a 7x ratio driven by the quadratic memory complexity of self-attention over T = 3000 time steps with 1722 training examples and the reduced batch size (4 vs. 16) necessitated by GPU memory constraints. The total multi-session benchmark runtime was approximately 11 hours on a single NVIDIA T4 GPU. CTC was the fastest to train owing to its simpler architecture.
 
 ---
 
@@ -240,21 +277,21 @@ In single-session experiments, the Conformer required approximately 6x longer tr
 
 My results demonstrate that architectural choice interacts critically with data availability, and that the optimal decoder depends on the training data regime.
 
-In the **low-data regime** (89 sentences, 267 augmented), the RCNN's inductive biases — local feature extraction via convolutions followed by sequential integration via recurrence — proved well-matched to neural handwriting decoding. The Conformer's flexible self-attention mechanism led to severe overfitting.
+In the **low-data regime** (89 sentences, 267 augmented), the RCNN's inductive biases (local feature extraction via convolutions followed by sequential integration via recurrence) proved well-matched to neural handwriting decoding. The Conformer's flexible self-attention mechanism led to severe overfitting.
 
-In the **moderate-data regime** (574 sentences, 1722 augmented), the architecture ranking reversed entirely: the Conformer achieved the best CER (55.86%), surpassing RCNN (60.04%) by 4.2 percentage points. The Conformer's 29.6 pp improvement from single- to multi-session — compared to RCNN's 5.9 pp improvement — demonstrates that attention-based architectures have a dramatically steeper data-scaling curve in this domain. This is consistent with findings in speech recognition (Gulati et al., 2020) and NLP, where transformer-based models underperform simpler alternatives on small datasets but dominate with sufficient data.
+In the **moderate-data regime** (574 sentences, 1722 augmented), the architecture ranking reversed entirely: the Conformer achieved the best CER (55.86%), surpassing RCNN (60.04%) by 4.2 percentage points. The Conformer's 29.6 pp improvement from single- to multi-session, compared to RCNN's 5.9 pp improvement, demonstrates that attention-based architectures have a dramatically steeper data-scaling curve in this domain. This is consistent with findings in speech recognition (Gulati et al., 2020) and NLP, where transformer-based models underperform simpler alternatives on small datasets but dominate with sufficient data.
 
-This finding has practical implications for BCI deployment: when calibration data is limited (as is typical in early clinical sessions), RCNN should be preferred. As data accumulates across sessions, transitioning to a Conformer architecture would yield substantially better performance. An adaptive deployment strategy — starting with RCNN and switching to Conformer after sufficient sessions — may be optimal in practice.
+This finding has practical implications for BCI deployment: when calibration data is limited (as is typical in early clinical sessions), RCNN should be preferred. As data accumulates across sessions, transitioning to a Conformer architecture would yield substantially better performance. An adaptive deployment strategy (starting with RCNN and switching to Conformer after sufficient sessions) may be optimal in practice.
 
 ### 4.2 The Alignment Bottleneck
 
-The large performance gap between Gaussian and Poisson alignment conditions underscores that alignment quality is the dominant factor in the decoding pipeline. Even the best decoder (RCNN) could not compensate for the noisy frame labels produced by Poisson HMM alignment. This suggests that future work should prioritise alignment quality improvements — such as discriminative alignment training, multi-session template estimation, or end-to-end alignment learning — over decoder architecture exploration.
+The large performance gap between Gaussian and Poisson alignment conditions underscores that alignment quality is the dominant factor in the decoding pipeline. Even the best decoder (RCNN) could not compensate for the noisy frame labels produced by Poisson HMM alignment. This suggests that future work should prioritise alignment quality improvements (discriminative alignment training, multi-session template estimation, end-to-end alignment learning) over decoder architecture exploration.
 
 The Poisson HMM's underperformance does not necessarily invalidate the Poisson emission model. Rather, my results indicate that the advantages of a theoretically correct generative model are overwhelmed by practical factors: template estimation noise from limited single-letter data, suboptimal HMM hyperparameters (bin size, transition probabilities), and the lack of the extensive calibration pipeline that Willett et al. developed for their Gaussian HMM.
 
 ### 4.3 Soft Labels: A Low-Cost Improvement
 
-The consistent improvement in frame-level accuracy from soft labels (+1.8 to +5.0 pp) represents a "free" improvement that requires no additional data or computation — only using the probability distributions already produced by HMM alignment rather than discarding them via argmax. I recommend soft-target training as a default for future neural decoding work using HMM-aligned labels.
+The consistent improvement in frame-level accuracy from soft labels (+1.8 to +5.0 pp) represents a "free" improvement that requires no additional data or computation, since it uses the probability distributions already produced by HMM alignment rather than discarding them via argmax. I recommend soft-target training as a default for future neural decoding work using HMM-aligned labels.
 
 ### 4.4 Limitations
 
@@ -270,7 +307,7 @@ Several limitations constrain the interpretation of these results:
 
 ### 4.5 Comparison with Willett et al.
 
-Direct comparison with Willett et al.'s reported 5.32% CER is not appropriate, as my experimental conditions differ in several critical ways: bigram vs. RNNLM decoding, 80 vs. thousands of training epochs, and minimal vs. extensive data augmentation. While I incorporated multi-session training, the data volume and augmentation sophistication remain far below the original study. This work is complementary — it provides a controlled comparison of architectural and alignment choices that was not the focus of the original study, and demonstrates the data-scaling properties of different decoder architectures.
+Direct comparison with Willett et al.'s reported 5.32% CER is not appropriate, as my experimental conditions differ in several critical ways: bigram vs. RNNLM decoding, 80 vs. thousands of training epochs, and minimal vs. extensive data augmentation. While I incorporated multi-session training, the data volume and augmentation sophistication remain far below the original study. This work is complementary: it provides a controlled comparison of architectural and alignment choices that was not the focus of the original study, and demonstrates the data-scaling properties of different decoder architectures.
 
 ### 4.6 Future Directions
 
@@ -288,11 +325,11 @@ Several directions could substantially improve performance:
 
 I presented a systematic comparison of decoder architectures and alignment strategies for neural decoding of imagined handwriting, evaluated on the publicly available Willett et al. (2021) dataset under both single-session (89 sentences) and multi-session (574 sentences) training conditions. The key findings are:
 
-1. **Architecture ranking depends on data availability**: The RCNN outperformed all architectures in the single-session regime (65.97% CER), but the Conformer surpassed it in the multi-session regime (55.86% CER) — a complete reversal driven by the Conformer's steeper data-scaling curve.
+1. **Architecture ranking depends on data availability**: The RCNN outperformed all architectures in the single-session regime (65.97% CER), but the Conformer surpassed it in the multi-session regime (55.86% CER), a complete reversal driven by the Conformer's steeper data-scaling curve.
 2. **Multi-session training provides large gains for attention-based models**: The Conformer improved by 29.6 percentage points with 6.4x more training data, compared to only 5.9 pp for RCNN, demonstrating that self-attention mechanisms are especially data-hungry but also especially data-responsive in this domain.
 3. **Soft probability targets** from HMM alignment improved frame-level accuracy by 1.8–5.0 percentage points over hard labels, representing a zero-cost enhancement.
 4. **Poisson HMM** alignment underperformed Gaussian HMM by 17+ percentage points in single-session experiments, indicating that template estimation quality outweighs emission model correctness in the current paradigm.
-5. **Alignment quality remains the primary bottleneck**, but training data volume is a close second — with sufficient data, the best CER improved from 65.97% to 55.86%, a 10.1 pp gain.
+5. **Alignment quality remains the primary bottleneck**, but training data volume is a close second: with sufficient data, the best CER improved from 65.97% to 55.86%, a 10.1 pp gain.
 
 These findings provide actionable guidance for neural BCI decoder design across data availability regimes and demonstrate the importance of considering data-scaling properties when selecting decoder architectures for clinical deployment.
 

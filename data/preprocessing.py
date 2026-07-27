@@ -113,8 +113,8 @@ def prepare_for_decoder(
 
     Returns:
         neural_padded : (n_trials, max_len, n_channels)
-        targets_padded: (n_trials, max_target_len) — int, -1 for padding
-        seq_lengths   : (n_trials,) — original neural sequence lengths
+        targets_padded: (n_trials, max_target_len) - int, -1 for padding
+        seq_lengths   : (n_trials,) - original neural sequence lengths
     """
     # --- Normalize neural_cube to a list of 2-D arrays ---
     if isinstance(neural_cube, np.ndarray) and neural_cube.ndim == 3:

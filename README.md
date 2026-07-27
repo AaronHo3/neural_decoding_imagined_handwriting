@@ -1,149 +1,151 @@
-# Neural Decoding of Imagined Handwriting
+# Is alignment quality, not decoder architecture, the binding constraint in handwriting BCI decoding?
 
-A systematic comparison of decoder architectures and alignment strategies for brain-to-text communication from intracortical neural recordings. Building on [Willett et al. (Nature 2021)](https://www.nature.com/articles/s41586-021-03506-2), I evaluate four neural sequence decoders across three alignment methods to understand what drives decoding accuracy under clinical data constraints.
+Brain-to-text decoding from intracortical recordings, building on
+[Willett et al. (Nature 2021)](https://www.nature.com/articles/s41586-021-03506-2).
 
-**Dataset**: [Willett et al. Dryad Repository](https://doi.org/10.5061/dryad.wh70rxwmv) | **Reference Code**: [handwritingBCI](https://github.com/fwillett/handwritingBCI)
+The Willett pipeline trains its decoder on frame-level character labels produced by a
+Gaussian HMM forced aligner. Those labels are **not ground truth**: nobody observed which
+character the participant was imagining at a given 10 ms bin. They are the output of a
+generative model fit to isolated letters and transferred to continuous sentences, and every
+downstream decoder inherits whatever error they contain.
 
----
+The literature has explored decoder architectures and language models extensively. The
+alignment stage is treated as fixed infrastructure. **This project asks how much of the
+decoding error that stage is actually responsible for.**
 
-## Key Results
-
-### Multi-Session Training (574 sentences from 10 sessions)
-
-| Decoder | Alignment | CER (%) | WER (%) | Frame Acc (%) |
-|---------|-----------|---------|---------|---------------|
-| **Conformer** | **Gaussian Hard** | **55.86** | **71.98** | **80.4** |
-| RCNN | Gaussian Hard | 60.04 | 85.05 | 73.5 |
-| RCNN | Gaussian Soft | 60.69 | 80.60 | 72.7 |
-| Conformer | Gaussian Soft | 60.79 | 81.10 | 80.4 |
-| GRU | Gaussian Hard | 71.91 | 94.07 | 60.2 |
-| CTC | None (alignment-free) | 85.75 | 98.62 | 14.3 |
-
-### Single-Session Training (89 sentences)
-
-| Decoder | Alignment | CER (%) | WER (%) | Frame Acc (%) |
-|---------|-----------|---------|---------|---------------|
-| **RCNN** | **Gaussian Hard** | **65.97** | **88.06** | 64.7 |
-| RCNN | Gaussian Soft | 67.63 | 92.95 | **66.5** |
-| GRU | Gaussian Soft | 73.69 | 90.78 | 61.3 |
-| Conformer | Gaussian Hard | 85.50 | 100.00 | 56.9 |
-
-*80 epochs, NVIDIA T4 GPU. See [RESULTS.md](RESULTS.md) for the full paper.*
-
-### Key Findings
-
-1. **Architecture ranking reverses with more data** — RCNN is best with 89 sentences (65.97% CER), but Conformer becomes best with 574 sentences (55.86% CER), improving by 29.6 pp
-2. **Multi-session training yields large gains** — best CER improved from 65.97% to 55.86% (10.1 pp) by aggregating data across 10 recording sessions
-3. **Soft probability targets** from HMM alignment improve frame accuracy by 1.8-5.0 pp over hard labels at zero additional cost
-4. **Alignment quality dominates** — Poisson HMM underperforms Gaussian by 17+ pp, showing template quality matters more than emission model choice
-5. **Conformer's data-scaling curve is dramatically steeper** than RCNN's (-29.6 pp vs -5.9 pp), confirming attention-based models are data-hungry but data-responsive
+📄 **[Research plan](docs/RESEARCH_PLAN.md)**: questions, hypotheses, and analysis
+procedure, written before the experiments were run.
 
 ---
 
-## Architecture Overview
+## Status
+
+| | |
+|---|---|
+| **Research plan** | Complete, hypotheses and analysis fixed in advance |
+| **Infrastructure** | Complete: 4 decoders, 2 aligners, seeded, artifact-emitting, 31 tests passing |
+| **RQ1** alignment error budget | Experiment implemented; sweep not yet run |
+| **RQ2** cross-session calibration | Not yet implemented |
+| **RQ3** alignment-free (CTC) crossover | Not yet implemented |
+| **Preliminary results** | [`docs/RESULTS.md`](docs/RESULTS.md), exploratory only, see caveats |
+
+This README makes no accuracy claims. Results appear here only once they are backed by
+committed artifacts in `results/` and reproduced across three seeds. Earlier exploratory
+numbers are in [`docs/RESULTS.md`](docs/RESULTS.md), labelled with their known defects.
+
+---
+
+## Research questions
+
+**RQ1: What is the alignment error budget?** Inject controlled corruption into the frame
+labels (boundary jitter; segment relabelling) and measure the decoding response. The
+central hypothesis is that the CER spread induced by moving one step along the label-quality
+axis exceeds the spread between architectures at any fixed label quality.
+
+**RQ2: How does alignment quality transfer across sessions?** The dataset spans ten
+sessions over nine months, with substantial neural drift. How much calibration data does a
+new session need, and which adaptation strategy (statistics recalibration, a session-specific
+input layer, or full fine-tuning) is most data-efficient at small budgets?
+
+**RQ3: Does alignment-free training escape the constraint?** CTC needs no frame labels and
+so is immune to RQ1's corruption. Given a *matched* decoding pipeline, is there a label-quality
+threshold below which abandoning forced alignment is the better choice?
+
+Hypotheses, sweep grids, and falsification criteria are in
+[`docs/RESEARCH_PLAN.md`](docs/RESEARCH_PLAN.md).
+
+---
+
+## Methodological note: 10 test sentences
+
+The dataset's held-out partition contains ten test sentences, and this is fixed by the
+dataset authors. Consequently every experiment here is designed as a **dose-response sweep
+rather than a pairwise comparison**. A monotone trend across five corruption levels is
+evidence; a single A-beats-B gap on ten sentences is not. All results report three seeds
+with individual points shown, and no difference smaller than the seed-to-seed range is
+claimed as real.
+
+This constraint drove the experimental design, and it is the main methodological difference
+from the preliminary work.
+
+---
+
+## Repository layout
 
 ```
-Neural Activity (192 channels, 10ms bins)
-         │
-         ├──→ Gaussian HMM Alignment (Willett) ──→ Frame-level character labels
-         ├──→ Poisson HMM Alignment (novel)    ──→ Frame-level character labels
-         │
-         ▼
-    ┌─────────────────────────────────────────────┐
-    │  Decoder Architectures                      │
-    │                                             │
-    │  GRU:       Input → GRU → Linear → Logits  │
-    │  RCNN:      Input → Conv1D → GRU → Logits  │
-    │  Conformer: Input → [½FFN→Attn→Conv→½FFN]  │
-    │  CTC:       Input → Conv1D → BiLSTM → CTC  │
-    └─────────────────────────────────────────────┘
-         │
-         ▼
-    Smoothing → Collapse → Beam Search + Bigram LM
-         │
-         ▼
-    Decoded Text: "you>want>me>to>sing?"
+├── docs/
+│   ├── RESEARCH_PLAN.md      # questions, hypotheses, design (written first)
+│   └── RESULTS.md            # preliminary writeup (caveated)
+├── experiments/              # one script per research question
+│   └── exp1_alignment_sensitivity.py
+├── analysis/
+│   └── make_figures.py       # the ONLY path from artifacts to figures
+├── results/                  # committed JSON, one per run (config + git SHA + seed)
+├── figures/                  # generated; never hand-edited
+├── tests/                    # 31 tests
+│
+├── alignment/                # forced alignment
+│   ├── gaussian_hmm.py       # Gaussian emissions + shared log-domain Viterbi
+│   └── poisson_hmm.py        # Poisson / negative-binomial emissions
+├── decoders/                 # shared BaseDecoder interface
+│   ├── rnn_decoder.py        # GRU (Willett baseline)
+│   ├── rcnn_decoder.py       # Conv1D + GRU
+│   ├── transformer_decoder.py # Conformer (Gulati et al. 2020)
+│   └── ctc_decoder.py        # CNN-BiLSTM + CTC
+├── data/                     # Willett dataset loader, preprocessing
+├── benchmarks/               # CER / WER / Levenshtein
+└── run_benchmark.py          # baseline architecture sweep
 ```
 
 ---
 
-## Project Structure
+## Reproducibility
 
-```
-neural_decoding_imagined_handwriting/
-├── alignment/                  # HMM forced alignment
-│   ├── gaussian_hmm.py         # Willett-style Gaussian emissions
-│   └── poisson_hmm.py          # Novel Poisson emissions for count data
-├── decoders/                   # Neural sequence decoders
-│   ├── rnn_decoder.py          # GRU baseline (Willett)
-│   ├── rcnn_decoder.py         # Conv1D + GRU hybrid
-│   ├── transformer_decoder.py  # Conformer (novel for neural decoding)
-│   ├── ctc_decoder.py          # CNN-BiLSTM + CTC loss
-│   └── base_decoder.py         # Abstract interface
-├── benchmarks/                 # Evaluation metrics
-│   ├── evaluate.py             # CER, WER, Levenshtein distance
-│   └── compare.py              # Comparison orchestration
-├── data/                       # Data pipeline
-│   ├── loader.py               # Willett dataset loader
-│   └── preprocessing.py        # Binning, normalization
-├── run_benchmark.py            # Main experiment script
-├── benchmark_colab.ipynb       # Google Colab notebook (GPU)
-├── download_data.sh            # Dataset download helper
-└── RESULTS.md                  # Full research paper
-```
-
----
-
-## Quick Start
-
-### 1. Install dependencies
+Every run emits a JSON artifact containing its metrics, full config, git SHA, seed, and the
+decoded string for all ten test sentences. Figures are generated from those artifacts alone
+by `analysis/make_figures.py`. No number is transcribed by hand at any point.
 
 ```bash
-pip install torch scipy scikit-learn h5py numpy
+pip install -r requirements.txt
+bash download_data.sh                 # Willett dataset from Dryad (~1.4 GB)
+pytest tests/ -q
+
+# RQ1: one condition, or the full pre-registered sweep (resumable)
+python3 experiments/exp1_alignment_sensitivity.py --corruption jitter --level 10 --seed 0
+python3 experiments/exp1_alignment_sensitivity.py --sweep
+
+python3 analysis/make_figures.py
+
+# Baseline architecture sweep
+python3 run_benchmark.py --full --max-len 3000 --seed 0 --output results/baseline_seed0.json
 ```
 
-### 2. Download the dataset
+The sweep skips conditions whose artifact already exists, so it resumes cleanly across
+Colab sessions. Failed conditions are recorded as `FAILED_*.json` rather than silently
+dropped, so gaps in coverage stay visible.
 
-```bash
-bash download_data.sh
-```
-
-Or download manually from [Dryad](https://doi.org/10.5061/dryad.wh70rxwmv) (~1.4 GB) and extract to `./handwritingBCIData/`.
-
-### 3. Run the benchmark
-
-```bash
-# Fast run (~5 min on GPU)
-python3 run_benchmark.py --max-len 1500 --skip-poisson --decoders gru rcnn
-
-# Full run (~30 min on GPU, single session)
-python3 run_benchmark.py --full --max-len 3000
-
-# Full run with multi-session training (~11 hours on GPU)
-python3 run_benchmark.py --full --max-len 3000 --multi-session --skip-poisson
-```
-
-### 4. Run on Google Colab (recommended)
-
-Open `benchmark_colab.ipynb` in Colab with a T4 GPU runtime. Upload `handwritingBCIData.tar.gz` to Google Drive, then run all cells.
+`benchmark_colab.ipynb` runs the pipeline on a Colab T4.
 
 ---
 
-## Novelty Beyond Willett et al.
+## Scope
 
-| Aspect | Willett et al. (2021) | This Work |
-|--------|----------------------|-----------|
-| Decoder | GRU only | GRU, RCNN, Conformer, CTC |
-| Alignment | Gaussian HMM | Gaussian + Poisson HMM |
-| Labels | Hard (argmax) | Hard + soft probability targets |
-| Language model | RNN-LM | Bigram LM with beam search |
-| Training | Multi-session, 1000s of epochs | Multi-session (10 sessions), 80 epochs |
-| Focus | Maximum accuracy | Controlled architectural comparison |
+This project does **not** attempt to beat Willett et al.'s 5.32% CER, and no comparison to
+that number would be meaningful, because it depends on an RNN language model, thousands of training
+epochs, and an augmentation pipeline well beyond what is reproduced here. Absolute error
+rates in this work are high and are not the contribution.
+
+The contribution is the *shape of the response*: how accuracy moves as label quality and
+session distance vary under otherwise matched conditions. That is measurable at high absolute
+error, and it is a question the original work did not ask.
+
+**Data:** [Dryad](https://doi.org/10.5061/dryad.wh70rxwmv) ·
+**Reference implementation:** [handwritingBCI](https://github.com/fwillett/handwritingBCI)
 
 ---
 
 ## References
 
-- Willett, F. R. et al. (2021). High-performance brain-to-text communication via handwriting. *Nature*, 593, 249-254.
-- Gulati, A. et al. (2020). Conformer: Convolution-augmented Transformer for Speech Recognition. *Interspeech 2020*.
-- Graves, A. et al. (2006). Connectionist temporal classification. *ICML 2006*.
+- Willett, F. R. et al. (2021). High-performance brain-to-text communication via handwriting. *Nature*, 593, 249–254.
+- Gulati, A. et al. (2020). Conformer: Convolution-augmented Transformer for Speech Recognition. *Interspeech 2020*, 5036–5040.
+- Graves, A. et al. (2006). Connectionist temporal classification. *ICML 2006*, 369–376.

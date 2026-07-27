@@ -6,7 +6,7 @@ both long-range context and local temporal structure in neural time series.
 Architecture follows Gulati et al. (2020) "Conformer: Convolution-augmented
 Transformer for Speech Recognition", adapted for neural spike decoding.
 
-This is a novel addition — Willett et al. (2021) used a GRU baseline.
+This is a novel addition; Willett et al. (2021) used a GRU baseline.
 """
 
 from __future__ import annotations

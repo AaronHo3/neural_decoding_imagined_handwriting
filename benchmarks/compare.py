@@ -32,7 +32,7 @@ def run_decoder_comparison(
 
     Args:
         data_dir:        Path to the extracted Dryad dataset root.
-        decoders:        [(name, decoder_instance), ...] — each instance must
+        decoders:        [(name, decoder_instance), ...], where each instance must
                          implement BaseDecoder (fit / predict).
         partition:       'HeldOutTrials' or 'HeldOutBlocks'.
         alignment_model: Fitted HMM aligner (GaussianHMM / PoissonHMM) used to
@@ -131,7 +131,7 @@ def run_alignment_comparison(
 
     Args:
         data_dir:          Path to the Dryad dataset root.
-        alignment_models:  [(name, fitted_hmm), ...] — each must have a
+        alignment_models:  [(name, fitted_hmm), ...], where each must have a
                            .align(obs, sentence, templates) method and
                            .templates_ attribute.
         decoder:           A decoder class *instance* that will be re-fitted

@@ -62,7 +62,7 @@ class GaussianHMMForcedAlignment:
             tw_cubes: {char: ndarray (n_trials, T_warped, N_channels)}
                       Time-warped neural activity for each character.
             char_def: Character definitions dict (may contain 'charList',
-                      'numTimeBins', etc.).  Not strictly required — the
+                      'numTimeBins', etc.).  Not strictly required; the
                       method processes every key present in tw_cubes.
 
         Returns:
@@ -132,8 +132,8 @@ class GaussianHMMForcedAlignment:
             templates: {char: (hmm_bin_size, N)} mean templates.
 
         Returns:
-            letter_starts    : (len(sentence),) int — start time index per char
-            letter_durations : (len(sentence),) int — duration in time bins
+            letter_starts    : (len(sentence),) int - start time index per char
+            letter_durations : (len(sentence),) int - duration in time bins
         """
         obs = np.asarray(obs, dtype=float)
         T, N = obs.shape

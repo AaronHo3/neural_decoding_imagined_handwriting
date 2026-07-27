@@ -66,7 +66,7 @@ class PoissonHMMForcedAlignment:
             char_def: Character definitions dict (informational; unused directly).
 
         Returns:
-            templates: {char: ndarray (hmm_bin_size, N_channels)} — mean rates λ
+            templates: {char: ndarray (hmm_bin_size, N_channels)} - mean rates λ
         """
         templates: Dict[str, np.ndarray] = {}
         all_rates  = []   # for NB dispersion estimation
@@ -214,7 +214,7 @@ class PoissonHMMForcedAlignment:
 
         Args:
             obs : (T, N)
-            lam : (S, N)  — mean rates μ
+            lam : (S, N)  - mean rates μ
 
         Returns:
             log_em : (T, S)
@@ -235,7 +235,7 @@ class PoissonHMMForcedAlignment:
 
         # k * log(p)  summed over N: (T, S)
         k_log_p = (obs[:, np.newaxis, :] * log_p[np.newaxis, :, :]).sum(axis=-1)
-        # r * log(1-p) summed: (T, S)  — actually constant across T per state
+        # r * log(1-p) summed: (T, S), actually constant across T per state
         r_log_1p = (r * log_1p).sum(axis=-1)  # (S,)
 
         # Binomial coefficient term: sum over N

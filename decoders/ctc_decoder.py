@@ -115,7 +115,7 @@ class CTCDecoder(BaseDecoder):
         Train with CTC loss.
 
         Args:
-            X: (n_trials, T, n_channels) — all trials padded to the same T.
+            X: (n_trials, T, n_channels) - all trials padded to the same T.
             y: List of 1-D int arrays (character index sequences, 1-indexed).
                Lengths may vary across trials.
             epochs, batch_size, lr: hyper-parameters.
@@ -162,7 +162,7 @@ class CTCDecoder(BaseDecoder):
                 tgt_lens   = torch.LongTensor([len(t) for t in tgt_batch])
                 tgt_concat = torch.cat(tgt_batch).to(device)
 
-                # Input lengths: all T (no masking — if masked, use real lengths)
+                # Input lengths: all T (no masking; if masked, use real lengths)
                 inp_lens = torch.full((B_sz,), T, dtype=torch.long)
 
                 optimizer.zero_grad()
@@ -189,7 +189,7 @@ class CTCDecoder(BaseDecoder):
             X: (n_trials, T, n_channels)
 
         Returns:
-            log_probs: (n_trials, T, n_outputs) — raw log-softmax outputs.
+            log_probs: (n_trials, T, n_outputs) - raw log-softmax outputs.
                        Use `ctc_greedy_decode` to convert to character sequences.
         """
         if self.model is None:

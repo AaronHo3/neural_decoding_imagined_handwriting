@@ -15,11 +15,54 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
+
+
+def set_seed(seed: int) -> None:
+    """Seed every RNG the pipeline touches, so a run is reproducible."""
+    import random
+
+    random.seed(seed)
+    np.random.seed(seed)
+    try:
+        import torch
+
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    except ImportError:
+        pass
+
+
+def git_sha() -> str:
+    """
+    Current commit, so every artifact records the code that produced it.
+
+    A dirty working tree is flagged with a '-dirty' suffix: the bare SHA would
+    otherwise claim provenance the code does not have, since uncommitted edits
+    are invisible to `rev-parse`. An artifact marked dirty is not reproducible
+    from the recorded commit alone and should not be used as evidence.
+    """
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return "unknown"
+
+    try:
+        dirty = subprocess.check_output(
+            ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return sha
+
+    return f"{sha}-dirty" if dirty else sha
 
 # ---------------------------------------------------------------------------
 # Character definitions
@@ -57,15 +100,15 @@ def load_sentence_data(
 
     Returns dict with keys:
         neural       : (n_sentences, T_padded, 192) float32
-        seq_lens     : (n_sentences,) int — actual timesteps per sentence
-        gauss_labels : (n_sentences, T_padded) int — hard frame labels from Gaussian HMM
-        ignore_mask  : (n_sentences, T_padded) bool — True where loss should be ignored
-        sentences    : list[str] — prompt text
-        char_seqs    : list[list[int]] — character index sequences per sentence
-        train_idx    : ndarray — sentence indices for training
-        test_idx     : ndarray — sentence indices for test
-        std_all      : (192,) — global std for z-scoring
-        means_block  : (n_blocks, 192) — per-block means
+        seq_lens     : (n_sentences,) int - actual timesteps per sentence
+        gauss_labels : (n_sentences, T_padded) int - hard frame labels from Gaussian HMM
+        ignore_mask  : (n_sentences, T_padded) bool - True where loss should be ignored
+        sentences    : list[str] - prompt text
+        char_seqs    : list[list[int]] - character index sequences per sentence
+        train_idx    : ndarray - sentence indices for training
+        test_idx     : ndarray - sentence indices for test
+        std_all      : (192,) - global std for z-scoring
+        means_block  : (n_blocks, 192) - per-block means
     """
     # --- Sentence neural data ---
     sent_raw = _load_mat(data_dir / "Datasets" / session / "sentences.mat")
@@ -148,10 +191,10 @@ def run_poisson_alignment(
     Fit Poisson HMM templates from single-letter data, then align sentences.
 
     IMPORTANT: Poisson emissions model integer spike counts, so we pass
-    raw (un-normalised) neural data — NOT z-scored data.
+    raw (un-normalised) neural data, NOT z-scored data.
 
     Returns:
-        poisson_labels: (n_sentences, T_padded) int — frame-level char indices
+        poisson_labels: (n_sentences, T_padded) int - frame-level char indices
     """
     from data.loader import WillettDataset
     from alignment.poisson_hmm import PoissonHMMForcedAlignment
@@ -182,7 +225,7 @@ def run_poisson_alignment(
         if not chars:
             continue
 
-        # Pass RAW spike counts — Poisson needs integer count data
+        # Pass RAW spike counts, since Poisson needs integer count data
         obs = neural_raw[i, :slen, :].astype(float)
 
         starts, durations = _align_sentence(phmm, obs, chars, templates)
@@ -420,7 +463,7 @@ def _smooth_and_decode(logits: np.ndarray, active_mask: np.ndarray) -> str:
     character segments by finding where the dominant class changes.
 
     With ~75 frames per character on average, we use a 51-frame window so
-    smoothing spans roughly 2/3 of a character segment — enough to stabilise
+    smoothing spans roughly 2/3 of a character segment, enough to stabilise
     without blurring adjacent characters together.
     """
     from scipy.ndimage import uniform_filter1d
@@ -526,7 +569,7 @@ def train_and_evaluate(
                 pred_strings.append(_smooth_and_decode(logits[i], active))
 
     # Reference strings from actual sentence prompts (NOT from collapsing
-    # frame labels — that merges repeated characters like "ll" in "hello")
+    # frame labels, which merges repeated characters like "ll" in "hello")
     ref_strings = []
     for sent in ref_sentences:
         s = str(sent)
@@ -558,7 +601,7 @@ def train_and_evaluate(
             else:
                 frame_acc = 0.0
         else:
-            # y_eval is soft (3D) — convert to hard for accuracy
+            # y_eval is soft (3D), so convert to hard for accuracy
             hard = y_eval.argmax(axis=-1)
             active_mask = y_eval.sum(axis=-1) > 0.5
             if active_mask.any():
@@ -566,9 +609,19 @@ def train_and_evaluate(
             else:
                 frame_acc = 0.0
     else:
-        frame_acc = 1.0 - cer
+        # CTC has no frame-level target to score against, because it is trained on
+        # unaligned character sequences. Any "frame accuracy" for CTC would be
+        # a different quantity from the other decoders' and is not reported.
+        frame_acc = None
 
-    return {"cer": cer, "wer": wer, "frame_acc": frame_acc, "train_time": dt}
+    return {
+        "cer": cer,
+        "wer": wer,
+        "frame_acc": frame_acc,
+        "train_time": dt,
+        "predictions": pred_strings,
+        "references": ref_strings,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +649,13 @@ def main():
                         help="Skip Poisson HMM alignment (faster)")
     parser.add_argument("--multi-session", action="store_true",
                         help="Train on all available sessions (test on primary)")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="RNG seed for numpy/torch/random (default 0)")
+    parser.add_argument("--output", default=None,
+                        help="Write a JSON results artifact to this path")
     args = parser.parse_args()
+
+    set_seed(args.seed)
 
     data_dir = Path(args.data_dir)
     fast = not args.full
@@ -628,6 +687,7 @@ def main():
     print(f"  Partition:  {args.partition}")
     print(f"  Max length: {args.max_len} bins ({args.max_len * 10}ms)")
     print(f"  Mode:       {'full' if args.full else 'fast'}")
+    print(f"  Seed:       {args.seed}")
     print(f"  Multi-sess: {args.multi_session}")
     print(f"  Decoders:   {args.decoders}")
     print()
@@ -716,7 +776,7 @@ def main():
             extra_gauss_all = np.concatenate(extra_gauss, axis=0)
             extra_soft_all = np.concatenate(extra_soft, axis=0)
 
-            # Store for later use — we'll prepend these to training arrays
+            # Store for later use; we'll prepend these to training arrays
             data["_extra_neural"] = extra_neural_all
             data["_extra_gauss"] = extra_gauss_all
             data["_extra_soft"] = extra_soft_all
@@ -865,7 +925,7 @@ def main():
 
             elif dec_name == "conformer":
                 from decoders.transformer_decoder import TransformerDecoder
-                # Conformer self-attention is O(T^2) memory — use smaller
+                # Conformer self-attention is O(T^2) memory, so use smaller
                 # batch size to avoid OOM on long sequences
                 conf_batch = max(1, batch_size // 4)
                 dec = TransformerDecoder(
@@ -945,9 +1005,10 @@ def main():
             key = (align, dec)
             if key in results:
                 m = results[key]
-                row += f" | {m['cer']*100:>14.2f}%  {m['wer']*100:>8.2f}%  {m['frame_acc']*100:>7.1f}%"
+                acc = "n/a" if m["frame_acc"] is None else f"{m['frame_acc']*100:.1f}%"
+                row += f" | {m['cer']*100:>14.2f}%  {m['wer']*100:>8.2f}%  {acc:>8s}"
             else:
-                row += f" | {'—':>15s}  {'—':>9s}  {'—':>8s}"
+                row += f" | {'-':>15s}  {'-':>9s}  {'-':>8s}"
         print(row)
 
     print()
@@ -961,9 +1022,34 @@ def main():
     print("SUMMARY")
     print("=" * 70)
     for (align, dec), m in sorted(results.items()):
+        acc = "  n/a" if m["frame_acc"] is None else f"{m['frame_acc']*100:5.1f}%"
         print(f"  {dec:<12s} + {align:<28s}  "
               f"CER={m['cer']*100:5.2f}%  WER={m['wer']*100:5.2f}%  "
-              f"Acc={m['frame_acc']*100:5.1f}%  ({m['train_time']:.0f}s)")
+              f"Acc={acc}  ({m['train_time']:.0f}s)")
+
+    # ------------------------------------------------------------------
+    # 6. Persist artifact
+    # ------------------------------------------------------------------
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact = {
+            "config": vars(args),
+            "git_sha": git_sha(),
+            "seed": args.seed,
+            "n_train_sentences": int(
+                X_train.shape[0]
+                + (0 if extra_neural_norm is None else extra_neural_norm.shape[0])
+            ),
+            "n_test_sentences": int(len(test_idx)),
+            "results": [
+                {"alignment": align, "decoder": dec, **m}
+                for (align, dec), m in sorted(results.items())
+            ],
+        }
+        with open(out_path, "w") as f:
+            json.dump(artifact, f, indent=2)
+        print(f"\nResults written to {out_path}")
 
     return results
 

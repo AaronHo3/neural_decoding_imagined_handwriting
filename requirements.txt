@@ -10,7 +10,11 @@ torch>=2.0
 h5py>=3.0
 # scipy.io for .mat files (included in scipy)
 
+# Analysis / figures
+matplotlib>=3.5
+
+# Testing
+pytest>=7.0
+
 # Optional: Jupyter for notebooks
 # jupyter>=1.0
-# matplotlib>=3.5
-# seaborn>=0.12
