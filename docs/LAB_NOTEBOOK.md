@@ -299,13 +299,40 @@ Three findings, in decreasing order of how well they are supported:
 
 ---
 
+## 2026-07-27 - Descoped to RQ1, and wrote it up
+
+Decided to close the project at RQ1 rather than continue to RQ2 (cross-session calibration)
+and RQ3 (alignment-free CTC). Neither had been started.
+
+**Reasoning.** RQ1 had become a self-contained study: a question the literature had not
+asked, hypotheses fixed beforehand, 198 runs, a control that overturned the first conclusion,
+and three reportable findings. RQ2 is not a deepening of that; it shares the dataset but not
+the question, and needs multi-session machinery and a new model variant RQ1 never required.
+One question taken all the way is worth more than three partially answered. The risk of the
+alternative is a repository that reads as over-scoped and abandoned.
+
+Both questions are preserved as future work in the writeup rather than deleted, since they
+are genuinely the right next steps. `RESEARCH_PLAN.md` section 2 records the descoping with
+its date and reason; nothing about RQ1's design or hypotheses changed.
+
+Wrote `docs/RQ1_alignment_error_types.md`: abstract, methods including the rationale for
+corruption-as-instrument and sweep-as-evidence, results, discussion, seven stated limitations,
+reproduction instructions, and future directions. Rewrote the README around the findings with
+a full reproduction path. Retitled the project: the plan's working title names the refuted
+thesis, which is left in place as the historical record, while the paper is titled for what
+was actually found.
+
+---
+
 ## Open questions
 
-1. **Re-run RQ1 at 3000 bins.** The full grid, roughly 4 to 6 hours. Required before any of
-   RQ1 is written up. Does the H1b jitter-versus-corruption asymmetry survive at full
-   length, or was it also a truncation effect?
-2. **Is the Conformer result an optimisation failure?** Test with gradient accumulation or
-   a shorter attention window before drawing any conclusion about attention.
-3. **Does the label effect hold once architecture is free to vary?** At 3000 bins the two
-   effects are the same size. The interesting question becomes whether they interact.
-4. **RQ2 and RQ3 remain unrun.** RQ2 in particular should use 3000 bins from the start.
+1. **Is the Conformer result an optimisation failure?** Its poor showing is corroborated by
+   an independent run, but undertraining has not been excluded. Gradient accumulation, longer
+   warmup, or a restricted attention window would separate data-hunger from optimisation.
+2. **Where does a real aligner sit on these curves?** The corruption models are stylised.
+   Running the Gaussian and Poisson HMMs in `alignment/` against Willett's reference labels
+   would show how real alignment errors divide between timing and identity.
+3. **Do the two effects interact?** At full length architecture and label quality are
+   comparable in size. Whether a more robust architecture buys tolerance to label noise is
+   not answered by the current design.
+4. **RQ2 and RQ3**, recorded as future work in the writeup rather than as open stubs here.

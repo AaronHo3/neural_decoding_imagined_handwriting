@@ -31,16 +31,35 @@ ENV/
 *.swp
 *.swo
 
-# Data / checkpoints (large files)
+# Dataset and model weights. The dataset is referenced by DOI rather than
+# vendored; see the README. Result artifacts under results/ ARE committed:
+# they are small derived metrics (~2 KB per run), not data, and the writeup's
+# claims are checked against them by tests/test_results_integrity.py.
 data/raw/
 *.mat
 *.pkl
+*.h5
+*.hdf5
 checkpoints/
-models/*.pt
-models/*.pth
-!models/.gitkeep
+*.pt
+*.pth
+*.ckpt
 handwritingBCIData/
-handwritingBCIData.tar.gz
+handwritingBCIData*.tar.gz
+*.tar.gz
+*.zip
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Scratch / local experiments not part of the record
+scratch/
+tmp/
+*.local.*

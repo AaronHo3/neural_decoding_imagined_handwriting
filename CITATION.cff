@@ -1,0 +1,72 @@
+cff-version: 1.2.0
+title: >-
+  Alignment error type, not error rate, limits handwriting BCI decoding
+message: >-
+  If you use this work, please cite it. Please also cite the underlying dataset
+  and article by Willett et al. (2021), listed under references: the
+  zero-corruption reference condition in every experiment here is their
+  forced-alignment output.
+type: software
+authors:
+  - given-names: Aaron
+    family-names: Ho
+repository-code: >-
+  https://github.com/AaronHo3/neural_decoding_imagined_handwriting
+abstract: >-
+  A controlled study of how decoder accuracy in brain-to-text handwriting BCI
+  depends on the quality of its forced-alignment labels. Controlled corruption
+  is injected into frame-level character labels across two corruption models,
+  five severity levels, three decoder architectures, three seeds and two
+  sequence-length regimes (198 runs). Boundary timing errors are shown to be
+  nearly free up to 17 percent of frames, while character identity errors cost
+  accuracy immediately, a 2.4x to 10.8x asymmetry. A secondary methodological
+  result shows that sequence truncation compresses character error rate toward
+  a ceiling and can invert an architecture conclusion.
+keywords:
+  - brain-computer interface
+  - neural decoding
+  - forced alignment
+  - reproducibility
+  - handwriting
+license: MIT
+references:
+  - type: article
+    title: >-
+      High-performance brain-to-text communication via handwriting
+    authors:
+      - given-names: Francis R.
+        family-names: Willett
+      - given-names: Donald T.
+        family-names: Avansino
+      - given-names: Leigh R.
+        family-names: Hochberg
+      - given-names: Jaimie M.
+        family-names: Henderson
+      - given-names: Krishna V.
+        family-names: Shenoy
+    journal: Nature
+    volume: 593
+    issue: 7858
+    start: 249
+    end: 254
+    year: 2021
+    doi: 10.1038/s41586-021-03506-2
+  - type: data
+    title: >-
+      Data from: High-performance brain-to-text communication via handwriting
+    authors:
+      - given-names: Francis R.
+        family-names: Willett
+      - given-names: Donald T.
+        family-names: Avansino
+      - given-names: Leigh R.
+        family-names: Hochberg
+      - given-names: Jaimie M.
+        family-names: Henderson
+      - given-names: Krishna V.
+        family-names: Shenoy
+    publisher:
+      name: Dryad
+    year: 2021
+    doi: 10.5061/dryad.wh70rxwmv
+    license: CC0-1.0

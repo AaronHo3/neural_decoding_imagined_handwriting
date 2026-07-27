@@ -1,132 +1,159 @@
-# Is alignment quality, not decoder architecture, the binding constraint in handwriting BCI decoding?
+# Alignment error *type*, not error *rate*, limits handwriting BCI decoding
 
-Brain-to-text decoding from intracortical recordings, building on
-[Willett et al. (Nature 2021)](https://www.nature.com/articles/s41586-021-03506-2).
+A controlled study of how much brain-to-text decoding accuracy depends on the quality of its
+forced-alignment labels, building on [Willett et al. (Nature 2021)](https://www.nature.com/articles/s41586-021-03506-2).
 
-The Willett pipeline trains its decoder on frame-level character labels produced by a
-Gaussian HMM forced aligner. Those labels are **not ground truth**: nobody observed which
-character the participant was imagining at a given 10 ms bin. They are the output of a
-generative model fit to isolated letters and transferred to continuous sentences, and every
-downstream decoder inherits whatever error they contain.
+The Willett pipeline trains its decoder on frame-level character labels produced by a hidden
+Markov model. Those labels are **not ground truth**: nobody observed which character the
+participant was imagining at a given 10 ms bin. They come from a generative model fit to
+isolated letters and transferred to continuous sentences, and every downstream decoder
+inherits whatever error they contain. The literature has explored decoder architectures and
+language models extensively while treating the alignment stage as fixed infrastructure.
 
-The literature has explored decoder architectures and language models extensively. The
-alignment stage is treated as fixed infrastructure. **This project asks how much of the
-decoding error that stage is actually responsible for.**
+**This project measures the decoding response to controlled degradation of those labels.**
+198 training runs, two corruption models, five severity levels, three architectures, three
+seeds, two sequence-length regimes.
 
-📄 **[Research plan](docs/RESEARCH_PLAN.md)**: questions, hypotheses, and analysis
-procedure, written before the experiments were run.
-📓 **[Lab notebook](docs/LAB_NOTEBOOK.md)**: dated record of what was done, why, and what
-it showed, including the decisions that turned out to be wrong.
-
----
-
-## Status
-
-| | |
-|---|---|
-| **Research plan** | Complete, hypotheses and analysis fixed in advance |
-| **Infrastructure** | Complete: 4 decoders, 2 aligners, seeded, artifact-emitting, 37 tests passing |
-| **RQ1** alignment error budget | 108 runs committed. Main hypothesis **refuted** by its own control, see below |
-| **RQ2** cross-session calibration | Not yet implemented |
-| **RQ3** alignment-free (CTC) crossover | Not yet implemented |
-| **Preliminary results** | [`docs/RESULTS.md`](docs/RESULTS.md), exploratory only, see caveats |
-
-Every number below traces to a committed artifact in `results/`, is reproduced across three
-seeds, and is re-derived by `analysis/analyze_exp1.py` rather than transcribed by hand.
-`tests/test_results_integrity.py` fails if any of them drift.
+📄 **[Read the writeup](docs/RQ1_alignment_error_types.md)** ·
+📋 **[Research plan](docs/RESEARCH_PLAN.md)** (hypotheses fixed before running) ·
+📓 **[Lab notebook](docs/LAB_NOTEBOOK.md)** (dated record, including what went wrong)
 
 ---
 
-## Current findings
+## Findings
 
-RQ1 is complete: **198 runs** across two sequence-length regimes, three decoders, two
-corruption models, five severity levels, three seeds. The pre-registered hypothesis was
-refuted, and the two findings that survived are more useful than it was.
+### 1. Timing errors are nearly free. Identity errors are expensive.
 
-### 1. Alignment error *type* matters more than alignment error *rate*
+Displacing character boundaries so that up to **17% of frame labels change** has **no
+measurable effect** on the best decoder. Relabelling the same proportion to the *wrong
+character* costs accuracy immediately and compounds.
 
-Displacing character boundaries so that up to 17% of frame labels change has **no
-measurable effect** on the best decoder (RCNN: -1.0, -0.7, -0.7 pp at 4%, 8%, 17% of frames
-displaced). Corrupting the same proportion of labels to the *wrong character* costs +2.8,
-+4.6 and +6.8 pp, rising immediately and roughly linearly.
+RCNN, character error rate change from clean labels (measured fraction of frames changed):
 
-| Decoder | Boundary jitter | Identity corruption | Ratio |
-|---|---|---|---|
-| GRU | +5.5 pp | +18.3 pp | 3.3x |
-| RCNN | +7.1 pp | +17.1 pp | 2.4x |
-| Conformer | +0.5 pp | +5.0 pp | 10.8x |
+| Frames changed | Boundary jitter | Identity corruption |
+|---|---|---|
+| 4-5% | **-1.0 pp** | +2.8 pp |
+| 8-10% | **-0.7 pp** | +4.6 pp |
+| 17-20% | **-0.7 pp** | +6.8 pp |
+| 31-40% | +7.1 pp | +17.1 pp |
 
-**A forced aligner does not need to be temporally precise. It needs to be
-identity-correct.** That is an actionable target for alignment design, and it is the
-substantive result of RQ1.
+Across architectures, corruption is **2.4x to 10.8x steeper** than jitter. The decoding
+pipeline smooths posteriors over 51 frames against roughly 75-frame characters, so mistimed
+boundaries are absorbed; a wrong character identity is unrecoverable at any smoothing width.
+
+**A forced aligner does not need to be temporally precise. It needs to be identity-correct.**
 
 ### 2. Sequence truncation can invert an architecture conclusion
 
-Run at 1500-bin sequences, architecture spread was 1.96 pp, *below* the 2.22 pp seed noise
-floor: the decoders looked indistinguishable. Re-run at full 3000-bin length, the same grid
-gives a 17.55 pp architecture spread, and the decoders separate cleanly (RCNN 67.3%, GRU
-74.2%, Conformer 86.5% on clean labels).
+| | 1500 bins | 3000 bins |
+|---|---|---|
+| Architecture spread | 1.64 pp | **17.55 pp** |
+| Label-quality spread | 6.21 pp | 9.41 pp |
+| Seed noise floor | 2.32 pp | 4.17 pp |
+| Label / architecture | 3.77x | **0.54x** |
 
-Truncation was compressing character error rate toward a ceiling and erasing the signal.
-Benchmarks on this dataset at reduced sequence length may be measuring the ceiling rather
-than the model. Both grids are committed as paired evidence.
+At truncated 1500-bin sequences the three decoders looked statistically indistinguishable,
+with architecture spread *below* the noise floor. The identical grid at full 3000-bin length
+separates them by 17.55 pp (RCNN 67.3%, GRU 74.2%, Conformer 86.5% on clean labels).
+Truncation compresses error rate toward a ceiling and erases the signal. Both grids are
+committed as paired evidence.
 
-### 3. The pre-registered hypothesis was refuted (and inverted)
+### 3. The pre-registered hypothesis was refuted
 
-H1c predicted label quality would dominate architecture. Over the full-length grid:
+H1c predicted label quality would dominate architecture. At full length architecture dominates
+by roughly two to one (0.54x). Both effects clear the noise floor, so both are real. H1d
+(unstable rankings) was also refuted: RCNN wins at 9 of 10 levels.
 
-| | Full grid, 3000 bins |
-|---|---|
-| Architecture spread | **17.55 pp** |
-| Label-quality spread | 9.41 pp |
-| Seed noise floor | 4.17 pp |
-| Label / architecture | **0.54x** |
+The interpretation rule that produced this verdict was written down *before* the deciding
+control ran. Original hypotheses are left unedited in the plan.
 
-Both effects clear the noise floor, so both are real, but architecture dominates by roughly
-two to one. H1d (unstable ranking) was also refuted: RCNN is best at 9 of 10 levels.
+*18 conditions were independently run twice and produced bit-identical error rates, so the
+pipeline is deterministic given a seed and the noise floor reflects initialisation variance
+alone.*
 
-The interpretation rule that produced this verdict was written down *before* the control
-ran ([research plan section 8](docs/RESEARCH_PLAN.md)), and the original hypotheses are
-left unedited. [`docs/LAB_NOTEBOOK.md`](docs/LAB_NOTEBOOK.md) records how it unfolded.
-
-*Reproducibility: 18 conditions were independently run twice and produced bit-identical
-CERs, so the pipeline is deterministic given a seed and the noise floor above reflects
-initialisation variance alone.*
+![RQ1 dose-response at full sequence length](figures/exp1_sweep_3000.png)
 
 ---
 
-## Research questions
+## Reproducing this
 
-**RQ1: What is the alignment error budget?** Inject controlled corruption into the frame
-labels (boundary jitter; segment relabelling) and measure the decoding response. The
-central hypothesis is that the CER spread induced by moving one step along the label-quality
-axis exceeds the spread between architectures at any fixed label quality.
+### 1. Environment
 
-**RQ2: How does alignment quality transfer across sessions?** The dataset spans ten
-sessions over nine months, with substantial neural drift. How much calibration data does a
-new session need, and which adaptation strategy (statistics recalibration, a session-specific
-input layer, or full fine-tuning) is most data-efficient at small budgets?
+```bash
+pip install -r requirements.txt
+pytest tests/ -q          # 37 tests
+```
 
-**RQ3: Does alignment-free training escape the constraint?** CTC needs no frame labels and
-so is immune to RQ1's corruption. Given a *matched* decoding pipeline, is there a label-quality
-threshold below which abandoning forced alignment is the better choice?
+Requires PyTorch with CUDA for the sweeps. Everything else runs on CPU.
 
-Hypotheses, sweep grids, and falsification criteria are in
-[`docs/RESEARCH_PLAN.md`](docs/RESEARCH_PLAN.md).
+### 2. Data
+
+Dryad blocks automated download (the legacy URL returns 403, the v2 API needs a bearer
+token), so this is one manual step.
+
+1. Download `handwritingBCIData.tar.gz` (1.31 GB) from
+   [doi:10.5061/dryad.wh70rxwmv](https://doi.org/10.5061/dryad.wh70rxwmv)
+2. `tar -xzf handwritingBCIData.tar.gz`, which expands to about 5.7 GB. Keep it outside the
+   repo if the repo lives in a synced folder.
+3. Verify the tree has what the experiments open:
+
+```bash
+python verify_data.py --data-dir /path/to/handwritingBCIData
+```
+
+This checks the specific files each experiment loads and names anything missing, rather than
+letting a truncated extraction fail hours into a sweep. It exits non-zero on any problem.
+
+### 3. Run
+
+```bash
+# Canonical grid: 90 runs at full sequence length, ~7.7 h on an RTX 4070 Ti SUPER
+python experiments/exp1_alignment_sensitivity.py --sweep --max-len 3000 \
+    --out-dir results/exp1_sweep_3000 --data-dir /path/to/handwritingBCIData
+
+# One condition, for a quick check (~3 min)
+python experiments/exp1_alignment_sensitivity.py --corruption jitter --level 10 \
+    --decoder rcnn --seed 0 --max-len 3000 --data-dir /path/to/handwritingBCIData
+```
+
+The sweep is **resumable**: it skips conditions whose artifact already exists, so an
+interruption costs at most one run. Failed conditions are written as `FAILED_*.json` rather
+than silently dropped, so gaps stay visible.
+
+### 4. Analyse
+
+```bash
+python analysis/analyze_exp1.py               # all statistics + results/exp1_summary.json
+python analysis/make_figures.py --experiment exp1
+```
 
 ---
 
-## Methodological note: 10 test sentences
+## How the claims are kept honest
 
-The dataset's held-out partition contains ten test sentences, and this is fixed by the
-dataset authors. Consequently every experiment here is designed as a **dose-response sweep
-rather than a pairwise comparison**. A monotone trend across five corruption levels is
-evidence; a single A-beats-B gap on ten sentences is not. All results report three seeds
-with individual points shown, and no difference smaller than the seed-to-seed range is
-claimed as real.
+This is the part worth looking at if you are evaluating the methodology rather than the
+result.
 
-This constraint drove the experimental design, and it is the main methodological difference
-from the preliminary work.
+**Hypotheses were fixed before running.** [`docs/RESEARCH_PLAN.md`](docs/RESEARCH_PLAN.md)
+states the questions, sweep grids, falsification criteria and statistical treatment up front.
+Predictions that failed are left unedited; analyses added after seeing data are quarantined in
+section 8 and labelled exploratory.
+
+**Every run emits an artifact.** `results/<experiment>/<condition>_seed<n>.json` carries the
+metrics, full config, seed, git SHA and the decoded string for all 10 test sentences. 180 run
+artifacts are committed. A dirty working tree stamps the SHA `-dirty`, because a bare SHA
+would claim provenance the code does not have.
+
+**No number is transcribed by hand.** `analysis/analyze_exp1.py` re-derives every statistic
+from the artifacts. `tests/test_results_integrity.py` fails if the writeup's numbers drift
+from what the artifacts say, if run counts are incomplete, or if the stated verdict does not
+follow the pre-committed rule.
+
+**The design answers a sample-size limit.** The test set is 10 sentences, fixed by the
+dataset. Rather than make pairwise comparisons that size cannot support, every experiment is a
+dose-response sweep across five pre-specified levels with three seeds. The sweep, not the
+comparison, is the unit of evidence, and no difference smaller than the seed spread is claimed
+as real.
 
 ---
 
@@ -134,105 +161,92 @@ from the preliminary work.
 
 ```
 ├── docs/
-│   ├── RESEARCH_PLAN.md      # questions, hypotheses, design (written first)
-│   ├── LAB_NOTEBOOK.md       # dated record of decisions and what they showed
-│   └── RESULTS.md            # preliminary writeup (caveated)
-├── experiments/              # one script per research question
-│   └── exp1_alignment_sensitivity.py
-├── analysis/
-│   ├── make_figures.py       # the ONLY path from artifacts to figures
-│   └── analyze_exp1.py       # re-derives every RQ1 number from artifacts
-├── results/                  # committed JSON, one per run (config + git SHA + seed)
-├── figures/                  # generated; never hand-edited
-├── tests/                    # 37 tests, incl. results-integrity checks
-├── verify_data.py            # check a dataset tree before spending GPU time
+│   ├── RQ1_alignment_error_types.md   # the writeup: methods, results, discussion, limits
+│   ├── RESEARCH_PLAN.md               # hypotheses and design, written before running
+│   ├── LAB_NOTEBOOK.md                # dated record of decisions and what they showed
+│   └── RESULTS.md                     # superseded preliminary study, kept with its caveats
 │
-├── alignment/                # forced alignment
-│   ├── gaussian_hmm.py       # Gaussian emissions + shared log-domain Viterbi
-│   └── poisson_hmm.py        # Poisson / negative-binomial emissions
-├── decoders/                 # shared BaseDecoder interface
-│   ├── rnn_decoder.py        # GRU (Willett baseline)
-│   ├── rcnn_decoder.py       # Conv1D + GRU
-│   ├── transformer_decoder.py # Conformer (Gulati et al. 2020)
-│   └── ctc_decoder.py        # CNN-BiLSTM + CTC
-├── data/                     # Willett dataset loader, preprocessing
-├── benchmarks/               # CER / WER / Levenshtein
-└── run_benchmark.py          # baseline architecture sweep
+├── experiments/
+│   └── exp1_alignment_sensitivity.py  # the corruption sweep
+├── analysis/
+│   ├── analyze_exp1.py                # re-derives every number from artifacts
+│   └── make_figures.py                # the ONLY path from artifacts to figures
+├── results/                           # 180 committed run artifacts + summary
+├── figures/                           # generated, never hand-edited
+├── tests/                             # 37 tests
+├── verify_data.py                     # check a dataset tree before spending GPU time
+│
+├── alignment/                         # forced alignment
+│   ├── gaussian_hmm.py                # Gaussian emissions + shared log-domain Viterbi
+│   └── poisson_hmm.py                 # Poisson / negative-binomial emissions
+├── decoders/                          # shared BaseDecoder interface
+│   ├── rnn_decoder.py                 # GRU (Willett baseline)
+│   ├── rcnn_decoder.py                # Conv1D + GRU
+│   ├── transformer_decoder.py         # Conformer (Gulati et al. 2020)
+│   └── ctc_decoder.py                 # CNN-BiLSTM + CTC (unused by RQ1, see future work)
+├── data/                              # dataset loader, preprocessing
+├── benchmarks/                        # CER / WER / Levenshtein
+└── run_benchmark.py                   # baseline architecture sweep (preliminary study)
 ```
-
----
-
-## Reproducibility
-
-Every run emits a JSON artifact containing its metrics, full config, git SHA, seed, and the
-decoded string for all ten test sentences. Figures are generated from those artifacts alone
-by `analysis/make_figures.py`. No number is transcribed by hand at any point.
-
-### Getting the data
-
-One manual step. Dryad blocks automated download (the legacy `file_stream` URL returns
-403, the v2 API requires a bearer token), so there is no download script to run.
-
-1. Open [doi:10.5061/dryad.wh70rxwmv](https://doi.org/10.5061/dryad.wh70rxwmv) and
-   download `handwritingBCIData.tar.gz` (1.31 GB).
-2. `tar -xzf handwritingBCIData.tar.gz`, which expands to roughly 5.7 GB. Keep it outside
-   the repo if the repo lives in a synced folder such as OneDrive or Dropbox.
-3. Confirm the tree is complete before spending GPU time on it:
-
-```bash
-python3 verify_data.py --data-dir /path/to/handwritingBCIData
-```
-
-`verify_data.py` checks the specific files the experiments open (per-session
-`sentences.mat`, the `Step2_HMMLabels` for your partition, the partition file) and names
-whatever is missing, rather than letting a truncated extraction fail hours into a sweep.
-It exits non-zero on any problem.
-
-### Running
-
-```bash
-pip install -r requirements.txt
-pytest tests/ -q
-
-# RQ1: one condition, or the full pre-registered sweep (resumable)
-python3 experiments/exp1_alignment_sensitivity.py --corruption jitter --level 10 --seed 0
-python3 experiments/exp1_alignment_sensitivity.py --sweep
-
-python3 analysis/make_figures.py
-
-# Baseline architecture sweep
-python3 run_benchmark.py --full --max-len 3000 --seed 0 --output results/baseline_seed0.json
-```
-
-Pass `--data-dir` to any of these if the dataset is not at `./handwritingBCIData`.
-
-The sweep skips conditions whose artifact already exists, so it resumes cleanly after an
-interruption. Failed conditions are recorded as `FAILED_*.json` rather than silently
-dropped, so gaps in coverage stay visible.
-
-`benchmark_colab.ipynb` runs the pipeline on a Colab GPU, though a local NVIDIA card is
-substantially faster and has no session limits.
 
 ---
 
 ## Scope
 
-This project does **not** attempt to beat Willett et al.'s 5.32% CER, and no comparison to
-that number would be meaningful, because it depends on an RNN language model, thousands of training
-epochs, and an augmentation pipeline well beyond what is reproduced here. Absolute error
-rates in this work are high and are not the contribution.
+This project does not attempt to beat Willett et al.'s 5.32% CER, and no comparison to that
+number would be meaningful: it depends on an RNN language model, thousands of training epochs
+and an augmentation pipeline not reproduced here. Absolute error rates here are high and are
+not the contribution.
 
-The contribution is the *shape of the response*: how accuracy moves as label quality and
-session distance vary under otherwise matched conditions. That is measurable at high absolute
-error, and it is a question the original work did not ask.
+The contribution is the *shape of the response*: how accuracy moves as label quality is varied
+under otherwise matched conditions. That is measurable at high absolute error, and it is a
+question the original work did not ask.
 
-**Data:** [Dryad](https://doi.org/10.5061/dryad.wh70rxwmv) ·
-**Reference implementation:** [handwritingBCI](https://github.com/fwillett/handwritingBCI)
+Future directions, including cross-session calibration and alignment-free training, are in
+[section 7 of the writeup](docs/RQ1_alignment_error_types.md).
+
+---
+
+## Acknowledgements
+
+This work depends on Willett et al. (2021) more deeply than as a data source. **The
+zero-corruption reference condition in every experiment is their own forced-alignment
+output**, taken from the `Step2_HMMLabels` release: a derived research product representing
+substantial methodological work (Gaussian emission templates fit to single-letter trials,
+Viterbi alignment, session-specific calibration). This study measures degradation *relative
+to their alignment* and could not exist without it.
+
+The dataset is released under CC0, which waives copyright but not scholarly credit. The
+article, the dataset and the reference implementation are cited separately below, as Dryad's
+independent DOI intends. Character class definitions follow the authors'
+`characterDefinitions.py`; the decoder architectures, corruption models, analysis and
+evaluation code here are original to this project.
 
 ---
 
 ## References
 
-- Willett, F. R. et al. (2021). High-performance brain-to-text communication via handwriting. *Nature*, 593, 249–254.
-- Gulati, A. et al. (2020). Conformer: Convolution-augmented Transformer for Speech Recognition. *Interspeech 2020*, 5036–5040.
-- Graves, A. et al. (2006). Connectionist temporal classification. *ICML 2006*, 369–376.
+**Primary source**
+
+- Willett, F. R., Avansino, D. T., Hochberg, L. R., Henderson, J. M., & Shenoy, K. V. (2021).
+  High-performance brain-to-text communication via handwriting. *Nature*, 593(7858), 249-254.
+  [doi:10.1038/s41586-021-03506-2](https://doi.org/10.1038/s41586-021-03506-2)
+- Willett, F. R., Avansino, D. T., Hochberg, L. R., Henderson, J. M., & Shenoy, K. V. (2021).
+  *Data from: High-performance brain-to-text communication via handwriting* [Dataset]. Dryad.
+  [doi:10.5061/dryad.wh70rxwmv](https://doi.org/10.5061/dryad.wh70rxwmv) (CC0-1.0)
+- Willett, F. R. (2021). *handwritingBCI* [Software].
+  [github.com/fwillett/handwritingBCI](https://github.com/fwillett/handwritingBCI)
+
+**Architectures**
+
+- Cho, K. et al. (2014). Learning phrase representations using RNN encoder-decoder for
+  statistical machine translation. *EMNLP 2014*, 1724-1734. (GRU)
+- Hochreiter, S., & Schmidhuber, J. (1997). Long short-term memory. *Neural Computation*,
+  9(8), 1735-1780. (BiLSTM)
+- Vaswani, A. et al. (2017). Attention is all you need. *NeurIPS 2017*, 5998-6008.
+- Gulati, A. et al. (2020). Conformer: Convolution-augmented Transformer for Speech
+  Recognition. *Interspeech 2020*, 5036-5040.
+- Graves, A. et al. (2006). Connectionist temporal classification. *ICML 2006*, 369-376.
+
+A complete reference list, including optimisers, edit distance and scientific software, is in
+[section 9 of the writeup](docs/RQ1_alignment_error_types.md).

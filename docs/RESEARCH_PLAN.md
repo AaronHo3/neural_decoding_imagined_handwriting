@@ -95,43 +95,21 @@ gracefully under boundary jitter than the GRU does.
 Falsification: if H1c fails, meaning architecture spread exceeds label-quality spread, the
 central thesis is wrong and the project reverts to a (properly powered) architecture study.
 
-### RQ2: How does alignment quality transfer across sessions?
+### RQ2 and RQ3: descoped, 2026-07-27
 
-*When the aligner is fit on session A's single-letter data and applied to session B's
-sentences, how much accuracy is lost, and how much new-session calibration data recovers it?*
+This plan originally posed two further questions: RQ2 on cross-session calibration
+efficiency, and RQ3 on whether alignment-free CTC training escapes the constraint RQ1
+measures. **Neither was run.** They are recorded as future work in
+`docs/RQ1_alignment_error_types.md` section 7 rather than left as open stubs.
 
-The dataset spans ten sessions from May 2019 to February 2020, with substantial neural drift
-across that window. For a held-out target session, we compare adaptation strategies at
-calibration budgets of k ∈ {0, 5, 10, 20, 40, 89} sentences:
+The decision was made after RQ1 completed, on the grounds that RQ1 had become a
+self-contained study with three reportable findings across 198 runs, and that one finished
+question is worth more than three partially answered ones. RQ2 in particular is a separate
+study rather than a deepening of this one: it shares the dataset but not the question, and
+it needs multi-session machinery and a new model variant that RQ1 never required.
 
-- **S0: No adaptation.** Train on pooled source sessions, apply directly. Lower bound.
-- **S1: Statistics recalibration.** Re-estimate per-channel z-scoring on the target
-  session's calibration sentences; decoder weights frozen. Cheapest possible adaptation.
-- **S2: Session-specific input layer.** Willett's approach: a per-session affine input
-  transform is learned while the shared trunk stays frozen.
-- **S3: Full fine-tune.** All weights updated on the calibration sentences.
-
-**H2a.** S0 performs far worse than a within-session model, because cross-session drift is the
-dominant error source, exceeding the multi-session pooling gains reported in the preliminary
-results.
-
-**H2b.** S2 dominates S3 at small k (k ≤ 20) because it has far fewer free parameters, and
-S3 catches up or overtakes by k = 89.
-
-**H2c.** S1 captures a substantial fraction of S2's benefit at k = 5, which would be a
-practically useful finding: most of the drift is first-order channel statistics, not
-representational change.
-
-### RQ3: Does alignment-free training escape the constraint? (secondary)
-
-CTC needs no frame labels, so it is immune to RQ1's corruption entirely. In the preliminary
-work it performed worst, but it was also the only condition denied beam search and LM
-rescoring, so the comparison was confounded.
-
-**H3.** Given a matched decoding pipeline (same beam search, same LM), CTC is worse than
-frame-supervised decoders at clean labels, but the gap closes as label corruption increases,
-with a crossover somewhere in the tested range. If a crossover exists, its location is a
-concrete recommendation: *below this alignment quality, stop using forced alignment.*
+Nothing about RQ1's design, hypotheses or analysis changed as a result. This note records a
+scope decision, not a revision of a prediction.
 
 ---
 
@@ -145,7 +123,7 @@ concrete recommendation: *below this alignment quality, stop using forced alignm
 | Partition | HeldOutTrials | Pre-specified by dataset authors |
 | Seeds | 3 per condition (0, 1, 2) | Minimum for a variance estimate |
 | Epochs | 80 | Matches preliminary work |
-| Sequence length | 1500 bins (RQ1), 3000 (RQ2) | RQ1 trades length for run count |
+| Sequence length | 1500 bins | Trades length for run count. **This was a mistake, see A1** |
 | Primary metric | CER, mean over test sentences | Standard in the field |
 | Reported statistic | mean ± range over seeds | Range, not SD, at n=3 |
 
@@ -163,9 +141,9 @@ non-negotiable, since the partition is fixed by the dataset. Consequences, accep
 - Per-sentence CER is reported alongside the mean, since one pathological sentence can move
   a 10-sentence mean by several points.
 
-This is why RQ1 and RQ2 are designed as dose-response sweeps rather than bake-offs. **The
-sweep is the unit of evidence.** That design choice is a direct response to the sample-size
-limit, and it is the main methodological improvement over the preliminary work.
+This is why RQ1 is designed as a dose-response sweep rather than a bake-off. **The sweep is
+the unit of evidence.** That design choice is a direct response to the sample-size limit,
+and it is the main methodological improvement over the preliminary work.
 
 ### Compute budget
 
@@ -173,12 +151,12 @@ limit, and it is the main methodological improvement over the preliminary work.
 |---|---|---|---|
 | RQ1 boundary jitter | 5 levels × 3 arch × 3 seeds = 45 | ~5 min | ~4 h |
 | RQ1 segment corruption | 5 × 3 × 3 = 45 | ~5 min | ~4 h |
-| RQ2 calibration sweep | 6 k × 4 strategies × 3 seeds = 72 | ~10 min | ~12 h |
-| RQ3 CTC matched pipeline | 5 × 3 = 15 | ~5 min | ~1.5 h |
 
-Roughly 22 GPU-hours on a T4, splittable across Colab sessions. Every run writes a JSON
-artifact to `results/` immediately on completion, so partial progress is never lost and the
-sweep can be resumed.
+Every run writes a JSON artifact to `results/` immediately on completion, so partial
+progress is never lost and the sweep can be resumed.
+
+*Actual: the 1500-bin grid took 3.15 h of training and the 3000-bin re-run 7.73 h, on an
+RTX 4070 Ti SUPER rather than the T4 originally planned for.*
 
 ---
 
@@ -204,8 +182,8 @@ epochs, and an augmentation pipeline far beyond what is reproduced here. The abs
 in this work are high and are not the contribution.
 
 The contribution is the *shape of the response*: how decoding accuracy moves as label quality
-and session distance are varied under otherwise matched conditions. That is measurable at
-high absolute error, and it is a question the original work did not ask.
+is varied under otherwise matched conditions. That is measurable at high absolute error, and
+it is a question the original work did not ask.
 
 ---
 
@@ -232,8 +210,8 @@ high absolute error, and it is a question the original work did not ask.
 | M0 | Reproduce preliminary baseline with seeds and committed artifacts | 3 seeds agree within stated range |
 | M1 | RQ1 boundary jitter sweep complete | H1a holds; monotone curve obtained |
 | M2 | RQ1 segment corruption sweep + H1c evaluated | Central thesis supported or refuted |
-| M3 | RQ2 calibration sweep complete | Curves separate the four strategies |
-| M4 | RQ3 matched-pipeline CTC | Crossover located or ruled out |
+| M3 | ~~RQ2 calibration sweep~~ | Descoped 2026-07-27, see section 2 |
+| M4 | ~~RQ3 matched-pipeline CTC~~ | Descoped 2026-07-27, see section 2 |
 | M5 | Writeup revised against plan; discrepancies documented | Every number traces to an artifact |
 
 M2 is the decision point. If the central thesis is refuted there, the honest paper is
