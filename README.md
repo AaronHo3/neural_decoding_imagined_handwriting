@@ -67,9 +67,10 @@ by roughly two to one (0.54x). Both effects clear the noise floor, so both are r
 The interpretation rule that produced this verdict was written down *before* the deciding
 control ran. Original hypotheses are left unedited in the plan.
 
-*18 conditions were independently run twice and produced bit-identical error rates, so the
-pipeline is deterministic given a seed and the noise floor reflects initialisation variance
-alone.*
+*18 conditions were run twice independently, six hours apart and at different commits, and
+produced bit-identical results down to every decoded string, so the noise floor above
+reflects initialisation variance alone. Determinism was verified empirically on this hardware
+rather than enforced by cuDNN flags; see the writeup for the scope of that claim.*
 
 ![RQ1 dose-response at full sequence length](figures/exp1_sweep_3000.png)
 

@@ -271,9 +271,11 @@ Hypothesis outcomes at full length, none of them edited above:
 | H1c label quality dominates architecture | **Refuted and inverted** (0.54x) |
 | H1d ranking unstable across levels | **Refuted.** RCNN < GRU < Conformer at 9 of 10 levels |
 
-**Reproducibility check.** A1 and A2 independently ran the same 18 conditions. All 18 CERs
-are bit-identical, so the pipeline is deterministic given a seed and the quoted noise floor
-reflects initialisation variance alone.
+**Reproducibility check.** A1 and A2 independently ran the same 18 conditions, six hours
+apart and at different commits. All 18 are bit-identical on CER, WER, frame accuracy and
+every decoded string, so the quoted noise floor reflects initialisation variance alone.
+Determinism was observed on this hardware rather than enforced: the cuDNN determinism flags
+are not set, so the guarantee does not travel to other machines.
 
 **Outcome: the control refuted H1c.** 18/18 runs completed. Applying the rule above without
 modification:

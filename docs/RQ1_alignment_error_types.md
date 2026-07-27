@@ -253,10 +253,26 @@ H1d at 1500 bins was noise around a compressed mean rather than a genuine intera
 
 ### 3.5 Reproducibility
 
-The 18 conditions shared between the control and the full grid were run independently and
-produced **bit-identical** character error rates, maximum difference 0.000000 pp. The pipeline
-is fully deterministic given a seed, so the quoted noise floor reflects weight-initialisation
-variance alone with no GPU nondeterminism mixed in.
+The 18 conditions shared between the control and the full grid were run independently, six
+hours apart, at different commits, into different output directories. They produced
+**bit-identical** results: identical character error rate to full float precision, identical
+word error rate, identical frame accuracy, and identical decoded strings for all 10 test
+sentences in all 18 conditions. Training wall-clock differed between the two runs (for
+example 546.2 s versus 554.7 s for the same Conformer condition), confirming the work was
+genuinely re-executed rather than cached. Across the grid, different seeds do produce
+different error rates in 30 of 30 conditions, so seeding is doing real work rather than
+collapsing the runs.
+
+The quoted seed noise floor therefore reflects weight-initialisation variance alone, with no
+run-to-run hardware nondeterminism mixed in.
+
+**Caveat on the scope of this claim.** `torch.use_deterministic_algorithms` and
+`torch.backends.cudnn.deterministic` are *not* set in `set_seed()`. Determinism here was
+observed empirically on one machine (RTX 4070 Ti SUPER, torch 2.7.1+cu118) with fixed batch
+shapes, not enforced by configuration. A different GPU, driver, cuDNN version or batch shape
+could select different kernels and break it. The correct reading is that these particular
+results reproduce exactly on this configuration, not that the code carries a portable
+determinism guarantee.
 
 ---
 

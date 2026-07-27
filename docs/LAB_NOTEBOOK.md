@@ -208,9 +208,23 @@ Re-ran the whole pre-registered grid at full sequence length into
 ### Determinism check (free, from the 18 overlapping conditions)
 
 The A1 control and this sweep independently ran the same 18 conditions. All 18 CERs are
-**bit-identical**, maximum difference 0.000000 pp. The pipeline is fully deterministic
-given a seed, which means the seed noise floor measures initialisation variance only, with
-no GPU nondeterminism mixed in. Worth knowing before quoting any noise floor.
+**bit-identical**, maximum difference 0.000000 pp, so the seed noise floor measures
+initialisation variance only, with no run-to-run hardware nondeterminism mixed in.
+
+Audited this rather than trusting it, since identical results can also mean the runs were
+silently cached. They were not: separate output directories, different commits (2b05227
+versus 9296058), written six hours apart, and different training wall-clock for the same
+condition (546.2 s versus 554.7 s), which is what genuine re-execution looks like. Agreement
+extends past CER to WER, frame accuracy and all 10 decoded strings. As a sanity check the
+other way, seeds do change the result in 30 of 30 conditions, so seeding is not a no-op.
+
+**But the claim needs bounding.** `set_seed()` does not set
+`torch.use_deterministic_algorithms` or `torch.backends.cudnn.deterministic`. Determinism was
+observed on this machine, not enforced by configuration, and a different GPU, driver, cuDNN
+version or batch shape could break it. Wording in the paper and README corrected accordingly:
+these results reproduce exactly on this configuration, rather than the code carrying a
+portable determinism guarantee. Setting the flags explicitly would be the real fix and is
+worth doing before any future sweep.
 
 ### H1c: refuted, and inverted
 
