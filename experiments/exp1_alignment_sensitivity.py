@@ -246,20 +246,41 @@ def main():
     p.add_argument("--out-dir", default="results/exp1_alignment_sensitivity")
     p.add_argument("--sweep", action="store_true",
                    help="Run the full pre-registered grid (resumable)")
+    p.add_argument("--control", action="store_true",
+                   help="POST-HOC control: corruption endpoints at --max-len "
+                        "3000, to test whether the main sweep's architecture "
+                        "null result is an artifact of 1500-bin truncation")
     args = p.parse_args()
+
+    # --control defaults to full-length sequences and its own results dir, but
+    # an explicit flag still wins so the control can be varied deliberately.
+    if args.control:
+        if "--max-len" not in sys.argv:
+            args.max_len = 3000
+        if "--out-dir" not in sys.argv:
+            args.out_dir = "results/exp1_maxlen3000"
 
     data_dir, out_dir = Path(args.data_dir), Path(args.out_dir)
     common = dict(data_dir=data_dir, session=args.session,
                   partition=args.partition, max_len=args.max_len,
                   epochs=args.epochs, out_dir=out_dir)
 
-    if not args.sweep:
+    if not (args.sweep or args.control):
         run_condition(corruption=args.corruption, level=args.level,
                       decoder=args.decoder, seed=args.seed, **common)
         return
 
-    grid = [("jitter", lv) for lv in JITTER_LEVELS] + \
-           [("corrupt", lv) for lv in CORRUPT_LEVELS]
+    if args.control:
+        # Endpoints only: clean labels vs. worst corruption. Enough to show
+        # whether architectures separate once the CER ceiling is lifted,
+        # without repaying the cost of the whole grid.
+        grid = [("corrupt", 0.0), ("corrupt", CORRUPT_LEVELS[-1])]
+        print(f"POST-HOC CONTROL: max_len={args.max_len}, "
+              f"endpoints {[lv for _, lv in grid]}, out={out_dir}")
+    else:
+        grid = [("jitter", lv) for lv in JITTER_LEVELS] + \
+               [("corrupt", lv) for lv in CORRUPT_LEVELS]
+
     total = len(grid) * len(DECODERS) * len(SEEDS)
     done = 0
     for corruption, level in grid:

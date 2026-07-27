@@ -239,3 +239,37 @@ high absolute error, and it is a question the original work did not ask.
 M2 is the decision point. If the central thesis is refuted there, the honest paper is
 "architecture matters more than expected under label noise", which is also publishable, and
 the plan is not rewritten to hide the prediction that failed.
+
+---
+
+## 8. Amendments after data collection
+
+Everything above this line was fixed before any experiment ran. Anything added below was
+decided *after* seeing results and is therefore exploratory, not confirmatory. It is
+recorded here rather than folded into section 2 so the distinction stays visible.
+
+### A1. Truncation control for RQ1 (added after the RQ1 sweep)
+
+**Why.** The RQ1 sweep ran at `--max-len 1500` to afford 90 runs, as section 3 specified.
+It returned a clean H1c result: architecture spread 1.64 pp against a seed noise floor of
+2.32 pp, versus label-quality spread 6.21 pp. But baseline CER at clean labels came out at
+77-79%, well above the 65.97% the preliminary work reached at 3000 bins. Truncating to 15
+seconds cuts the tail off longer sentences, so predictions cannot cover the full reference
+and CER is inflated.
+
+That compresses the dynamic range for *both* effects, which raises an alternative
+explanation for the headline result: architectures may be indistinguishable because there
+is no headroom to distinguish them, not because they are genuinely equivalent.
+
+**Design.** Corruption endpoints only (p = 0.0 and p = 0.40), all three decoders, three
+seeds, at `--max-len 3000`. Eighteen runs. Endpoints alone are enough to measure
+architecture spread with the ceiling lifted; the intermediate levels are not needed to
+answer this specific question.
+
+**Interpretation, fixed before running the control.** If architecture spread at 3000 bins
+remains below the seed noise floor, H1c stands and the truncation objection is answered.
+If architectures separate by more than the noise floor once the ceiling is lifted, then
+H1c holds only in the truncated regime, and every claim from RQ1 must be qualified to that
+regime. Neither outcome is edited into section 2 afterwards.
+
+Run with `python experiments/exp1_alignment_sensitivity.py --control`.
