@@ -273,3 +273,46 @@ H1c holds only in the truncated regime, and every claim from RQ1 must be qualifi
 regime. Neither outcome is edited into section 2 afterwards.
 
 Run with `python experiments/exp1_alignment_sensitivity.py --control`.
+
+**Outcome: the control refuted H1c.** 18/18 runs completed. Applying the rule above without
+modification:
+
+| | 1500 bins | 3000 bins |
+|---|---|---|
+| Mean architecture spread | 1.96 pp | **13.64 pp** |
+| Mean label effect | 7.80 pp | 13.45 pp |
+| Seed noise floor | 2.22 pp | 3.57 pp |
+| Label / architecture ratio | 3.98x | **0.99x** |
+
+At full sequence length the architectures separate enormously at clean labels: RCNN 67.3%,
+GRU 74.2%, Conformer 86.5%, a 19.2 pp spread against a 3.6 pp noise floor. At 1500 bins that
+same spread was 1.98 pp. Truncation was compressing CER toward a ceiling and destroying the
+architecture signal, and the "architectures are indistinguishable" result was an artifact of
+it.
+
+Two consistency checks support this reading rather than a bug. RCNN's 67.3% at 3000 bins
+reproduces the preliminary work's 65.97%, and the Conformer's poor showing reproduces the
+preliminary single-session Conformer result (85.50%). The 1500-bin numbers, not the
+3000-bin ones, are the anomaly.
+
+**Consequences, applied as pre-committed:**
+
+1. H1c is **refuted** in the full-length regime. The central thesis in section 1, that
+   label quality dominates architecture, does not hold as stated. It is left unedited above.
+2. What survives is weaker but still real: label quality has a large effect (13.45 pp, 3.8x
+   the noise floor). It simply does not *dominate*; architecture is comparable in size.
+3. Every RQ1 number from the 1500-bin sweep is quantitatively compromised. The dose-response
+   *shape* may survive, but magnitudes are compressed by roughly 40% and the
+   architecture comparison is invalid.
+4. RQ1 must be re-run at `--max-len 3000` before any of it is written up.
+5. Section 3's "1500 bins for RQ1" tradeoff was a mistake and is superseded.
+
+**A methodological finding worth reporting in its own right:** sequence truncation is a
+confound that can invert an architecture conclusion on this dataset. Anyone benchmarking
+decoders on Willett's sentences at reduced sequence length may be measuring the ceiling
+rather than the model.
+
+**Caveat on the Conformer.** Its 86.5% at 3000 bins is worse than its 77.9% at 1500, which
+is the opposite of the expected direction for more context. Self-attention over 3000 steps
+at batch size 4 may be an optimisation failure rather than an architectural limit. This is
+not resolved here and should not be reported as evidence about attention per se.
