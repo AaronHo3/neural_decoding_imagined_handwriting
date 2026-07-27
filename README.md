@@ -23,7 +23,7 @@ procedure, written before the experiments were run.
 | | |
 |---|---|
 | **Research plan** | Complete, hypotheses and analysis fixed in advance |
-| **Infrastructure** | Complete: 4 decoders, 2 aligners, seeded, artifact-emitting, 31 tests passing |
+| **Infrastructure** | Complete: 4 decoders, 2 aligners, seeded, artifact-emitting, 33 tests passing |
 | **RQ1** alignment error budget | Experiment implemented; sweep not yet run |
 | **RQ2** cross-session calibration | Not yet implemented |
 | **RQ3** alignment-free (CTC) crossover | Not yet implemented |
@@ -82,7 +82,8 @@ from the preliminary work.
 │   └── make_figures.py       # the ONLY path from artifacts to figures
 ├── results/                  # committed JSON, one per run (config + git SHA + seed)
 ├── figures/                  # generated; never hand-edited
-├── tests/                    # 31 tests
+├── tests/                    # 33 tests
+├── verify_data.py            # check a dataset tree before spending GPU time
 │
 ├── alignment/                # forced alignment
 │   ├── gaussian_hmm.py       # Gaussian emissions + shared log-domain Viterbi
@@ -105,9 +106,30 @@ Every run emits a JSON artifact containing its metrics, full config, git SHA, se
 decoded string for all ten test sentences. Figures are generated from those artifacts alone
 by `analysis/make_figures.py`. No number is transcribed by hand at any point.
 
+### Getting the data
+
+One manual step. Dryad blocks automated download (the legacy `file_stream` URL returns
+403, the v2 API requires a bearer token), so there is no download script to run.
+
+1. Open [doi:10.5061/dryad.wh70rxwmv](https://doi.org/10.5061/dryad.wh70rxwmv) and
+   download `handwritingBCIData.tar.gz` (1.31 GB).
+2. `tar -xzf handwritingBCIData.tar.gz`, which expands to roughly 5.7 GB. Keep it outside
+   the repo if the repo lives in a synced folder such as OneDrive or Dropbox.
+3. Confirm the tree is complete before spending GPU time on it:
+
+```bash
+python3 verify_data.py --data-dir /path/to/handwritingBCIData
+```
+
+`verify_data.py` checks the specific files the experiments open (per-session
+`sentences.mat`, the `Step2_HMMLabels` for your partition, the partition file) and names
+whatever is missing, rather than letting a truncated extraction fail hours into a sweep.
+It exits non-zero on any problem.
+
+### Running
+
 ```bash
 pip install -r requirements.txt
-bash download_data.sh                 # Willett dataset from Dryad (~1.4 GB)
 pytest tests/ -q
 
 # RQ1: one condition, or the full pre-registered sweep (resumable)
@@ -120,11 +142,14 @@ python3 analysis/make_figures.py
 python3 run_benchmark.py --full --max-len 3000 --seed 0 --output results/baseline_seed0.json
 ```
 
-The sweep skips conditions whose artifact already exists, so it resumes cleanly across
-Colab sessions. Failed conditions are recorded as `FAILED_*.json` rather than silently
+Pass `--data-dir` to any of these if the dataset is not at `./handwritingBCIData`.
+
+The sweep skips conditions whose artifact already exists, so it resumes cleanly after an
+interruption. Failed conditions are recorded as `FAILED_*.json` rather than silently
 dropped, so gaps in coverage stay visible.
 
-`benchmark_colab.ipynb` runs the pipeline on a Colab T4.
+`benchmark_colab.ipynb` runs the pipeline on a Colab GPU, though a local NVIDIA card is
+substantially faster and has no session limits.
 
 ---
 

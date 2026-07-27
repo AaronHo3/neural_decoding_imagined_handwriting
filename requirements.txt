@@ -1,5 +1,5 @@
 # Core
-numpy>=1.20,<2.0
+numpy>=1.20
 scipy>=1.7.0
 scikit-learn>=1.0
 
